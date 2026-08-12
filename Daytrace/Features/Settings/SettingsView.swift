@@ -1,11 +1,18 @@
+import SwiftData
 import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Environment(LocationRecorder.self) private var recorder
+    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
 
     @AppStorage("detailedRoutesEnabled") private var detailedRoutesEnabled = false
     @AppStorage("rawEvidenceRetentionDays") private var rawEvidenceRetentionDays = 90
+
+    private var suppressedCount: Int {
+        TimelineVisibility.suppressedEpisodeIDs(from: assertions).count
+    }
 
     var body: some View {
         NavigationStack {
@@ -42,6 +49,13 @@ struct SettingsView: View {
 
                 Section("データ") {
                     LabeledContent("保存先", value: "このiPhone")
+
+                    if suppressedCount > 0 {
+                        Button("非表示をすべて戻す（\(suppressedCount)）") {
+                            try? TimelineEditingService().restoreAllSuppressed(in: modelContext)
+                        }
+                    }
+
                     Button("書き出す") { }
                         .disabled(true)
                     Text("JSON / GPX / Markdown書き出しは次のマイルストーンで接続します。")

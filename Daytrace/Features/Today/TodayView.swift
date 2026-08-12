@@ -7,17 +7,26 @@ struct TodayView: View {
     @Environment(LocationRecorder.self) private var recorder
     @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
+    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
 
     @State private var selectedEpisodeID: UUID?
     @State private var isSettingsPresented = false
     @State private var stayEditSelection: StayEditSelection?
+    @State private var undoSuppressedEpisodeID: UUID?
 
     private var day: DayInterval {
         DayInterval(containing: .now, timeZone: .current)
     }
 
+    private var suppressedEpisodeIDs: Set<UUID> {
+        TimelineVisibility.suppressedEpisodeIDs(from: assertions)
+    }
+
     private var todayEpisodes: [TimelineEpisode] {
-        episodes.filter { day.intersects(start: $0.startDate, end: $0.endDate) }
+        episodes.filter {
+            !suppressedEpisodeIDs.contains($0.id)
+                && day.intersects(start: $0.startDate, end: $0.endDate)
+        }
     }
 
     private var todayJournal: JournalEntry? {
@@ -44,7 +53,8 @@ struct TodayView: View {
                     lastEvidenceAt: recorder.lastEvidenceAt,
                     onEdit: { episode in
                         stayEditSelection = StayEditSelection(episode: episode)
-                    }
+                    },
+                    onSuppress: suppress
                 )
 
                 JournalComposer(day: day, existingJournal: todayJournal)
@@ -86,6 +96,46 @@ struct TodayView: View {
                 .allowsHitTesting(false)
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if let episodeID = undoSuppressedEpisodeID {
+                HStack(spacing: 12) {
+                    Text("滞在を非表示にしました")
+                        .font(.subheadline)
+                    Spacer()
+                    Button("元に戻す") {
+                        restoreSuppressed(episodeID)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                .background(.regularMaterial, in: Capsule())
+                .padding(.horizontal, DS.horizontalPadding)
+                .padding(.bottom, 6)
+            }
+        }
+    }
+
+    private func suppress(_ episode: TimelineEpisode) {
+        guard episode.kind == .stay else { return }
+        try? TimelineEditingService().setSuppressed(
+            episodeID: episode.id,
+            suppressed: true,
+            in: modelContext
+        )
+        if selectedEpisodeID == episode.id {
+            selectedEpisodeID = nil
+        }
+        undoSuppressedEpisodeID = episode.id
+    }
+
+    private func restoreSuppressed(_ episodeID: UUID) {
+        try? TimelineEditingService().setSuppressed(
+            episodeID: episodeID,
+            suppressed: false,
+            in: modelContext
+        )
+        undoSuppressedEpisodeID = nil
     }
 }
 

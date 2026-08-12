@@ -4,10 +4,16 @@ import SwiftUI
 struct HistoryView: View {
     @Query(sort: \TimelineEpisode.startDate, order: .reverse) private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor, order: .reverse) private var journals: [JournalEntry]
+    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
 
     @State private var displayedMonth = Date.now
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+
+    private var visibleEpisodes: [TimelineEpisode] {
+        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
+        return episodes.filter { !suppressed.contains($0.id) }
+    }
 
     var body: some View {
         ScrollView {
@@ -15,11 +21,11 @@ struct HistoryView: View {
                 MonthHeader(displayedMonth: $displayedMonth)
                 MonthGrid(
                     displayedMonth: displayedMonth,
-                    episodes: episodes,
+                    episodes: visibleEpisodes,
                     journals: journals,
                     columns: columns
                 )
-                RecentDaysList(episodes: episodes, journals: journals)
+                RecentDaysList(episodes: visibleEpisodes, journals: journals)
             }
             .padding(.horizontal, DS.horizontalPadding)
             .padding(.bottom, 40)

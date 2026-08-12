@@ -5,6 +5,7 @@ struct DayTimeline: View {
     @Binding var selectedEpisodeID: UUID?
     let lastEvidenceAt: Date?
     let onEdit: (TimelineEpisode) -> Void
+    let onSuppress: (TimelineEpisode) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -23,6 +24,10 @@ struct DayTimeline: View {
                     onEdit: {
                         guard episode.kind == .stay else { return }
                         onEdit(episode)
+                    },
+                    onSuppress: {
+                        guard episode.kind == .stay else { return }
+                        onSuppress(episode)
                     }
                 )
             }
@@ -39,6 +44,7 @@ private struct TimelineEpisodeRow: View {
     let lastEvidenceAt: Date?
     let onSelect: () -> Void
     let onEdit: () -> Void
+    let onSuppress: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -98,6 +104,7 @@ private struct TimelineEpisodeRow: View {
         .contextMenu {
             if episode.kind == .stay {
                 Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
+                Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
             }
         }
         .accessibilityElement(children: .combine)
