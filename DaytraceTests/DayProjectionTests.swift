@@ -31,6 +31,21 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertFalse(interval.intersects(start: start, end: nil))
     }
 
+    func testOngoingEpisodeDoesNotMarkFutureDay() throws {
+        let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 12, hour: 18)))
+        let episodeStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 12, hour: 9)))
+        let today = DayInterval(containing: now, timeZone: timeZone)
+        let tomorrowDate = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: now))
+        let tomorrow = DayInterval(containing: tomorrowDate, timeZone: timeZone)
+
+        XCTAssertTrue(today.intersects(start: episodeStart, end: nil, openEndedAt: now))
+        XCTAssertFalse(tomorrow.intersects(start: episodeStart, end: nil, openEndedAt: now))
+    }
+
     @MainActor
     func testRenameAssertionDoesNotFreezeAutomaticDeparture() throws {
         let context = try makeContext()
@@ -311,6 +326,51 @@ final class DayProjectionTests: XCTestCase {
             TimelineVisibility.suppressedEpisodeIDs(from: try context.fetch(FetchDescriptor<UserAssertion>())).isEmpty
         )
         XCTAssertEqual(try context.fetch(FetchDescriptor<TimelineEpisode>()).count, 2)
+    }
+
+    @MainActor
+    func testEmptyJournalSaveDeletesExistingEntry() throws {
+        let context = try makeContext()
+        let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
+        let day = DayInterval(containing: baseTime, timeZone: timeZone)
+        let journal = JournalEntry(
+            dayAnchor: day.start,
+            body: "残っていた日記",
+            timeZoneIdentifier: zone
+        )
+        context.insert(journal)
+        try context.save()
+
+        let result = try JournalEditingService().save(
+            day: day,
+            body: "   \n ",
+            existingJournal: journal,
+            in: context,
+            now: baseTime
+        )
+
+        XCTAssertNil(result)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<JournalEntry>()).isEmpty)
+    }
+
+    @MainActor
+    func testJournalSaveTrimsAndCreatesEntry() throws {
+        let context = try makeContext()
+        let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
+        let day = DayInterval(containing: baseTime, timeZone: timeZone)
+
+        let result = try JournalEditingService().save(
+            day: day,
+            body: "  今日はよかった  \n",
+            existingJournal: nil,
+            in: context,
+            now: baseTime
+        )
+
+        let journal = try XCTUnwrap(result)
+        XCTAssertEqual(journal.body, "今日はよかった")
+        XCTAssertEqual(journal.dayAnchor, day.start)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<JournalEntry>()).count, 1)
     }
 
     @MainActor
