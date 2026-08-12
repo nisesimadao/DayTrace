@@ -242,6 +242,22 @@ private struct StayEditorSheet: View {
         _isOngoing = State(initialValue: episode.endDate == nil)
     }
 
+    private var originalDisplayTitle: String {
+        episode.title == "未設定の場所" ? "" : episode.title
+    }
+
+    private var trimmedTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasEditedPlaceName: Bool {
+        trimmedTitle != originalDisplayTitle
+    }
+
+    private var shouldApplyConfirmation: Bool {
+        shouldConfirmLocation && (episode.confidence != .high || hasEditedPlaceName)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -249,12 +265,12 @@ private struct StayEditorSheet: View {
                     TextField("場所の名前", text: $title)
                         .textInputAutocapitalization(.never)
 
-                    if episode.confidence == .high {
+                    if episode.confidence == .high && !hasEditedPlaceName {
                         Label("この場所は高い確度で記録されています", systemImage: "checkmark.circle")
                             .foregroundStyle(.secondary)
                     } else {
                         Toggle("この場所で合っている", isOn: $shouldConfirmLocation)
-                            .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(trimmedTitle.isEmpty)
                     }
                 }
 
@@ -297,7 +313,7 @@ private struct StayEditorSheet: View {
             title: title,
             startDate: startDate,
             endDate: isOngoing ? nil : endDate,
-            confirmLocation: shouldConfirmLocation,
+            confirmLocation: shouldApplyConfirmation,
             in: modelContext
         )
         dismiss()
