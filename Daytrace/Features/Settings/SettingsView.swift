@@ -10,7 +10,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("自動記録") {
+                Section {
                     LabeledContent("状態", value: healthLabel)
                     LabeledContent("位置情報", value: authorizationLabel)
 
@@ -18,6 +18,8 @@ struct SettingsView: View {
                         .onChange(of: detailedRoutesEnabled) { _, enabled in
                             recorder.setDetailedRoutesEnabled(enabled)
                         }
+                } header: {
+                    Text("自動記録")
                 } footer: {
                     Text("詳細な経路は必要な場面で位置更新を増やすため、バッテリー消費が増える場合があります。")
                 }
