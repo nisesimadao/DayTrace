@@ -4,16 +4,18 @@ import SwiftData
 
 @MainActor
 struct TimelineEngine {
-    static let sourceVersion = 2
+    static let sourceVersion = 3
 
     func rebuildRecentTimeline(in context: ModelContext, now: Date = .now) throws {
         let horizon = now.addingTimeInterval(-60 * 60 * 48)
 
-        let visitDescriptor = FetchDescriptor<VisitEvidence>(
-            predicate: #Predicate { $0.arrivalDate >= horizon },
-            sortBy: [SortDescriptor(\VisitEvidence.arrivalDate)]
-        )
-        let visits = try context.fetch(visitDescriptor)
+        let allVisits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        let visits = allVisits
+            .filter { visit in
+                guard let arrival = visit.arrivalDate else { return false }
+                return arrival >= horizon || (visit.departureDate ?? .distantFuture) >= horizon
+            }
+            .sorted { visitStart($0) < visitStart($1) }
 
         let locationDescriptor = FetchDescriptor<LocationEvidence>(
             predicate: #Predicate { $0.timestamp >= horizon },
@@ -21,96 +23,175 @@ struct TimelineEngine {
         )
         let locations = try context.fetch(locationDescriptor)
 
-        let episodeDescriptor = FetchDescriptor<TimelineEpisode>(
-            predicate: #Predicate { $0.startDate >= horizon }
-        )
-        let existingEpisodes = try context.fetch(episodeDescriptor)
-        let assertions = try context.fetch(FetchDescriptor<UserAssertion>())
-        let protectedEpisodeIDs = Set(assertions.compactMap { $0.isActive ? $0.episodeID : nil })
-
-        for episode in existingEpisodes where !protectedEpisodeIDs.contains(episode.id) {
-            context.delete(episode)
+        let existingEpisodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        let assertions = try context.fetch(FetchDescriptor<UserAssertion>()).filter { $0.isActive }
+        var assertionsByEpisode: [UUID: [UserAssertion]] = [:]
+        for assertion in assertions {
+            guard let episodeID = assertion.episodeID else { continue }
+            assertionsByEpisode[episodeID, default: []].append(assertion)
         }
 
-        let protectedEpisodes = existingEpisodes.filter { protectedEpisodeIDs.contains($0.id) }
-        var previousVisit: VisitEvidence?
+        let activeAssertionEpisodeIDs = Set(assertionsByEpisode.keys)
+        let currentVisitIDs = Set(visits.map(\.id))
+
+        for episode in existingEpisodes where episode.startDate >= horizon && episode.kind != .stay {
+            if !activeAssertionEpisodeIDs.contains(episode.id) {
+                context.delete(episode)
+            }
+        }
+
+        for episode in existingEpisodes where episode.startDate >= horizon && episode.kind == .stay {
+            guard !activeAssertionEpisodeIDs.contains(episode.id) else { continue }
+            if let sourceVisitID = episode.sourceVisitID {
+                if !currentVisitIDs.contains(sourceVisitID) {
+                    context.delete(episode)
+                }
+            } else {
+                context.delete(episode)
+            }
+        }
+
+        var stayByVisitID: [UUID: TimelineEpisode] = [:]
+        for episode in existingEpisodes where episode.kind == .stay {
+            if let sourceVisitID = episode.sourceVisitID {
+                stayByVisitID[sourceVisitID] = episode
+            }
+        }
 
         for visit in visits {
-            if let previousVisit,
-               let previousDeparture = previousVisit.departureDate,
-               visit.arrivalDate > previousDeparture {
-                insertTransition(
-                    from: previousVisit,
-                    departure: previousDeparture,
-                    to: visit,
-                    locations: locations,
-                    protectedEpisodes: protectedEpisodes,
-                    context: context
-                )
-            }
+            guard let arrival = visit.arrivalDate else { continue }
+            let resolvedPlace = nearestPlace(to: visit, in: context)
+            let inferredTitle = resolvedPlace?.name ?? "未設定の場所"
+            let inferredSubtitle = resolvedPlace == nil ? "場所を確認" : nil
+            let inferredConfidence: EpisodeConfidence = resolvedPlace != nil
+                ? .high
+                : (visit.horizontalAccuracy <= 100 ? .medium : .low)
 
-            let overlapsProtected = protectedEpisodes.contains {
-                intervalsOverlap(
-                    startA: $0.startDate,
-                    endA: $0.endDate,
-                    startB: visit.arrivalDate,
-                    endB: visit.departureDate
+            if let episode = stayByVisitID[visit.id] {
+                reconcile(
+                    episode,
+                    with: visit,
+                    arrival: arrival,
+                    inferredTitle: inferredTitle,
+                    inferredSubtitle: inferredSubtitle,
+                    inferredConfidence: inferredConfidence,
+                    resolvedPlace: resolvedPlace,
+                    assertions: assertionsByEpisode[episode.id] ?? []
                 )
-            }
-
-            if !overlapsProtected {
-                let resolvedPlace = nearestPlace(to: visit, in: context)
-                context.insert(TimelineEpisode(
+            } else {
+                let episode = TimelineEpisode(
                     kind: .stay,
-                    startDate: visit.arrivalDate,
+                    startDate: arrival,
                     endDate: visit.departureDate,
-                    title: resolvedPlace?.name ?? "未設定の場所",
-                    subtitle: resolvedPlace == nil ? "場所を確認" : nil,
+                    title: inferredTitle,
+                    subtitle: inferredSubtitle,
                     latitude: visit.latitude,
                     longitude: visit.longitude,
-                    confidence: resolvedPlace != nil ? .high : (visit.horizontalAccuracy <= 100 ? .medium : .low),
+                    confidence: inferredConfidence,
                     placeID: resolvedPlace?.id,
+                    sourceVisitID: visit.id,
                     sourceVersion: Self.sourceVersion,
                     timeZoneIdentifier: visit.timeZoneIdentifier
-                ))
+                )
+                context.insert(episode)
+                stayByVisitID[visit.id] = episode
             }
-
-            previousVisit = visit
         }
 
-        applyAssertions(assertions.sorted { $0.createdAt < $1.createdAt }, to: protectedEpisodes)
+        let canonicalStays = stayByVisitID.values
+            .filter { $0.startDate >= horizon || ($0.endDate ?? .distantFuture) >= horizon }
+            .sorted { $0.startDate < $1.startDate }
+
+        for pair in zip(canonicalStays, canonicalStays.dropFirst()) {
+            guard let departure = pair.0.endDate else { continue }
+            let nextArrival = pair.1.startDate
+            guard nextArrival.timeIntervalSince(departure) >= 60 else { continue }
+            insertTransition(
+                departure: departure,
+                nextArrival: nextArrival,
+                timeZoneIdentifier: pair.1.timeZoneIdentifier,
+                locations: locations,
+                context: context
+            )
+        }
+
         try context.save()
     }
 
+    private func reconcile(
+        _ episode: TimelineEpisode,
+        with visit: VisitEvidence,
+        arrival: Date,
+        inferredTitle: String,
+        inferredSubtitle: String?,
+        inferredConfidence: EpisodeConfidence,
+        resolvedPlace: PlaceRecord?,
+        assertions: [UserAssertion]
+    ) {
+        let assertionTypes = Set(assertions.map(\.type))
+
+        episode.kind = .stay
+        episode.sourceVisitID = visit.id
+        episode.sourceVersion = Self.sourceVersion
+        episode.timeZoneIdentifier = visit.timeZoneIdentifier
+
+        if !assertionTypes.contains(.retime) {
+            episode.startDate = arrival
+            episode.endDate = visit.departureDate
+        }
+
+        if !assertionTypes.contains(.rename) {
+            episode.title = inferredTitle
+            episode.subtitle = inferredSubtitle
+            episode.placeID = resolvedPlace?.id
+        }
+
+        if !assertionTypes.contains(.reposition) {
+            episode.latitude = visit.latitude
+            episode.longitude = visit.longitude
+        }
+
+        episode.confidence = assertionTypes.contains(.confirm) ? .high : inferredConfidence
+
+        for assertion in assertions.sorted(by: { $0.createdAt < $1.createdAt }) {
+            switch assertion.type {
+            case .rename:
+                if let title = assertion.replacementTitle { episode.title = title }
+            case .retime:
+                if let start = assertion.replacementStart { episode.startDate = start }
+                episode.endDate = assertion.replacementEnd
+            case .reposition:
+                if let latitude = assertion.replacementLatitude { episode.latitude = latitude }
+                if let longitude = assertion.replacementLongitude { episode.longitude = longitude }
+            case .confirm:
+                episode.confidence = .high
+            case .suppress:
+                episode.subtitle = "非表示"
+            case .mergeStay, .splitStay:
+                break
+            }
+        }
+    }
+
     private func insertTransition(
-        from previous: VisitEvidence,
         departure: Date,
-        to next: VisitEvidence,
+        nextArrival: Date,
+        timeZoneIdentifier: String,
         locations: [LocationEvidence],
-        protectedEpisodes: [TimelineEpisode],
         context: ModelContext
     ) {
-        guard next.arrivalDate.timeIntervalSince(departure) >= 60 else { return }
-
-        let overlapsProtected = protectedEpisodes.contains {
-            intervalsOverlap(startA: $0.startDate, endA: $0.endDate, startB: departure, endB: next.arrivalDate)
-        }
-        guard !overlapsProtected else { return }
-
-        let transitionSamples = locations.filter { $0.timestamp >= departure && $0.timestamp <= next.arrivalDate }
+        let transitionSamples = locations.filter { $0.timestamp >= departure && $0.timestamp <= nextArrival }
         let kind: EpisodeKind = transitionSamples.isEmpty ? .gap : .move
-        let title = kind == .move ? "移動" : "記録のない区間"
-        let subtitle = kind == .gap ? "この間の位置情報を確認できませんでした" : nil
 
         context.insert(TimelineEpisode(
             kind: kind,
             startDate: departure,
-            endDate: next.arrivalDate,
-            title: title,
-            subtitle: subtitle,
+            endDate: nextArrival,
+            title: kind == .move ? "移動" : "記録のない区間",
+            subtitle: kind == .gap ? "この間の位置情報を確認できませんでした" : nil,
             confidence: kind == .move ? .medium : .low,
             sourceVersion: Self.sourceVersion,
-            timeZoneIdentifier: next.timeZoneIdentifier
+            timeZoneIdentifier: timeZoneIdentifier
         ))
     }
 
@@ -120,8 +201,10 @@ struct TimelineEngine {
 
         return places
             .compactMap { place -> (PlaceRecord, CLLocationDistance)? in
-                let distance = visitLocation.distance(from: CLLocation(latitude: place.latitude, longitude: place.longitude))
-                let allowedDistance = max(place.radius, visit.horizontalAccuracy)
+                let distance = visitLocation.distance(
+                    from: CLLocation(latitude: place.latitude, longitude: place.longitude)
+                )
+                let allowedDistance = max(place.radius, max(visit.horizontalAccuracy, 0))
                 guard distance <= allowedDistance else { return nil }
                 return (place, distance)
             }
@@ -129,30 +212,7 @@ struct TimelineEngine {
             .0
     }
 
-    private func applyAssertions(_ assertions: [UserAssertion], to protectedEpisodes: [TimelineEpisode]) {
-        let byID = Dictionary(uniqueKeysWithValues: protectedEpisodes.map { ($0.id, $0) })
-        for assertion in assertions where assertion.isActive {
-            guard let episodeID = assertion.episodeID, let episode = byID[episodeID] else { continue }
-            switch assertion.type {
-            case .rename:
-                if let title = assertion.replacementTitle { episode.title = title }
-            case .retime:
-                if let start = assertion.replacementStart { episode.startDate = start }
-                if let end = assertion.replacementEnd { episode.endDate = end }
-            case .reposition:
-                if let latitude = assertion.replacementLatitude { episode.latitude = latitude }
-                if let longitude = assertion.replacementLongitude { episode.longitude = longitude }
-            case .suppress:
-                episode.subtitle = "非表示"
-            case .confirm:
-                episode.confidence = .high
-            case .mergeStay, .splitStay:
-                break
-            }
-        }
-    }
-
-    private func intervalsOverlap(startA: Date, endA: Date?, startB: Date, endB: Date?) -> Bool {
-        startA < (endB ?? .distantFuture) && (endA ?? .distantFuture) > startB
+    private func visitStart(_ visit: VisitEvidence) -> Date {
+        visit.arrivalDate ?? visit.departureDate ?? visit.observedAt
     }
 }
