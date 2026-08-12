@@ -255,7 +255,9 @@ private struct StayEditorSheet: View {
     }
 
     private var shouldApplyConfirmation: Bool {
-        shouldConfirmLocation && (episode.confidence != .high || hasEditedPlaceName)
+        shouldConfirmLocation
+            && !trimmedTitle.isEmpty
+            && (episode.confidence != .high || hasEditedPlaceName)
     }
 
     var body: some View {
