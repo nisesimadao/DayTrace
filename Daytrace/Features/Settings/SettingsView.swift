@@ -56,7 +56,7 @@ struct SettingsView: View {
 
                     if suppressedCount > 0 {
                         Button("非表示をすべて戻す（\(suppressedCount)）") {
-                            try? TimelineEditingService().restoreAllSuppressed(in: modelContext)
+                            restoreAllSuppressed()
                         }
                     }
 
@@ -100,6 +100,15 @@ struct SettingsView: View {
             EmptyView()
         @unknown default:
             EmptyView()
+        }
+    }
+
+    private func restoreAllSuppressed() {
+        do {
+            try TimelineEditingService().restoreAllSuppressed(in: modelContext)
+            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
+        } catch {
+            // Keep the current UI state; the next successful rebuild will reconcile the timeline.
         }
     }
 
