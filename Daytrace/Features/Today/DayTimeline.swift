@@ -134,7 +134,8 @@ private struct TimelineRail: View {
                     .frame(width: DS.timelineLine)
             }
         }
-        .frame(width: 20, minHeight: episode.kind == .stay ? 66 : 52)
+        .frame(width: 20)
+        .frame(minHeight: episode.kind == .stay ? 66 : 52)
     }
 
     @ViewBuilder
