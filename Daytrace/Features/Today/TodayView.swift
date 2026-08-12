@@ -20,6 +20,12 @@ struct TodayView: View {
         episodes.filter { day.intersects(start: $0.startDate, end: $0.endDate) }
     }
 
+    private var hasLocatableStay: Bool {
+        todayEpisodes.contains { episode in
+            episode.kind == .stay && episode.latitude != nil && episode.longitude != nil
+        }
+    }
+
     private var todayJournal: JournalEntry? {
         journals.first { $0.dayAnchor >= day.start && $0.dayAnchor < day.end }
     }
@@ -33,19 +39,25 @@ struct TodayView: View {
                     TrackingHealthBanner(health: recorder.health)
                 }
 
-                DayMap(
-                    episodes: todayEpisodes,
-                    selectedEpisodeID: $selectedEpisodeID
-                )
+                if hasLocatableStay {
+                    DayMap(
+                        episodes: todayEpisodes,
+                        selectedEpisodeID: $selectedEpisodeID
+                    )
+                }
 
-                DayTimeline(
-                    episodes: todayEpisodes,
-                    selectedEpisodeID: $selectedEpisodeID,
-                    lastEvidenceAt: recorder.lastEvidenceAt,
-                    onEdit: { episode in
-                        stayEditSelection = StayEditSelection(episode: episode)
-                    }
-                )
+                if todayEpisodes.isEmpty {
+                    EmptyTimelineState()
+                } else {
+                    DayTimeline(
+                        episodes: todayEpisodes,
+                        selectedEpisodeID: $selectedEpisodeID,
+                        lastEvidenceAt: recorder.lastEvidenceAt,
+                        onEdit: { episode in
+                            stayEditSelection = StayEditSelection(episode: episode)
+                        }
+                    )
+                }
 
                 JournalComposer(day: day, existingJournal: todayJournal)
             }
@@ -74,17 +86,6 @@ struct TodayView: View {
         .task {
             recorder.requestForegroundSnapshot()
             try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
-        }
-        .overlay {
-            if todayEpisodes.isEmpty {
-                ContentUnavailableView {
-                    Label("まだ記録がありません", systemImage: "location.circle")
-                } description: {
-                    Text("移動すると、訪れた場所がここに並びます。\n日記だけ先に書くこともできます。")
-                }
-                .offset(y: -70)
-                .allowsHitTesting(false)
-            }
         }
     }
 }
@@ -115,6 +116,28 @@ private struct TodayHeader: View {
             }
         }
         .padding(.top, 12)
+    }
+}
+
+private struct EmptyTimelineState: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "location.circle")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+                .frame(width: 32)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("まだ記録がありません")
+                    .font(.body.weight(.semibold))
+                Text("移動すると訪れた場所がここに並びます。日記だけ先に残しても大丈夫です。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
     }
 }
 
