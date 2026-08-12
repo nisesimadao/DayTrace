@@ -5,8 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
+  build-and-test:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v6
@@ -21,3 +25,12 @@ jobs:
           -sdk iphonesimulator
           CODE_SIGNING_ALLOWED=NO
           build
+      - name: Unit tests
+        run: >-
+          xcodebuild
+          -project Daytrace.xcodeproj
+          -scheme Daytrace
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
+          CODE_SIGNING_ALLOWED=NO
+          test
