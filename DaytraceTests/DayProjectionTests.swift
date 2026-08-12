@@ -69,6 +69,121 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testEditingArrivalDoesNotFreezeAutomaticDeparture() throws {
+        let context = try makeContext()
+        let arrival = Date(timeIntervalSince1970: 1_786_500_000)
+        let editedArrival = arrival.addingTimeInterval(-10 * 60)
+        let departure = arrival.addingTimeInterval(60 * 60 * 5)
+        let visit = VisitEvidence(
+            arrivalDate: arrival,
+            departureDate: nil,
+            observedAt: arrival,
+            latitude: 34.66,
+            longitude: 133.92,
+            horizontalAccuracy: 25,
+            timeZoneIdentifier: "Asia/Tokyo"
+        )
+        context.insert(visit)
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: arrival.addingTimeInterval(60))
+        let firstStay = try XCTUnwrap(try context.fetch(FetchDescriptor<TimelineEpisode>()).first { $0.kind == .stay })
+
+        try TimelineEditingService().saveStay(
+            firstStay,
+            title: firstStay.title,
+            startDate: editedArrival,
+            endDate: firstStay.endDate,
+            confirmLocation: false,
+            in: context
+        )
+
+        visit.departureDate = departure
+        visit.observedAt = departure
+        try context.save()
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: departure.addingTimeInterval(60))
+
+        let stay = try XCTUnwrap(try context.fetch(FetchDescriptor<TimelineEpisode>()).first { $0.sourceVisitID == visit.id })
+        XCTAssertEqual(stay.startDate, editedArrival)
+        XCTAssertEqual(stay.endDate, departure)
+    }
+
+    @MainActor
+    func testEditingDepartureDoesNotFreezeAutomaticArrivalRefinement() throws {
+        let context = try makeContext()
+        let arrival = Date(timeIntervalSince1970: 1_786_500_000)
+        let initialDeparture = arrival.addingTimeInterval(60 * 60 * 4)
+        let editedDeparture = initialDeparture.addingTimeInterval(20 * 60)
+        let refinedArrival = arrival.addingTimeInterval(5 * 60)
+        let visit = VisitEvidence(
+            arrivalDate: arrival,
+            departureDate: initialDeparture,
+            observedAt: initialDeparture,
+            latitude: 34.66,
+            longitude: 133.92,
+            horizontalAccuracy: 25,
+            timeZoneIdentifier: "Asia/Tokyo"
+        )
+        context.insert(visit)
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: initialDeparture.addingTimeInterval(60))
+        let firstStay = try XCTUnwrap(try context.fetch(FetchDescriptor<TimelineEpisode>()).first { $0.kind == .stay })
+
+        try TimelineEditingService().saveStay(
+            firstStay,
+            title: firstStay.title,
+            startDate: firstStay.startDate,
+            endDate: editedDeparture,
+            confirmLocation: false,
+            in: context
+        )
+
+        visit.arrivalDate = refinedArrival
+        visit.observedAt = editedDeparture
+        try context.save()
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: editedDeparture.addingTimeInterval(60))
+
+        let stay = try XCTUnwrap(try context.fetch(FetchDescriptor<TimelineEpisode>()).first { $0.sourceVisitID == visit.id })
+        XCTAssertEqual(stay.startDate, refinedArrival)
+        XCTAssertEqual(stay.endDate, editedDeparture)
+    }
+
+    @MainActor
+    func testClearingDepartureKeepsOngoingOverride() throws {
+        let context = try makeContext()
+        let arrival = Date(timeIntervalSince1970: 1_786_500_000)
+        let departure = arrival.addingTimeInterval(60 * 60 * 2)
+        let visit = VisitEvidence(
+            arrivalDate: arrival,
+            departureDate: departure,
+            observedAt: departure,
+            latitude: 34.66,
+            longitude: 133.92,
+            horizontalAccuracy: 25,
+            timeZoneIdentifier: "Asia/Tokyo"
+        )
+        context.insert(visit)
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: departure.addingTimeInterval(60))
+        let firstStay = try XCTUnwrap(try context.fetch(FetchDescriptor<TimelineEpisode>()).first { $0.kind == .stay })
+
+        try TimelineEditingService().saveStay(
+            firstStay,
+            title: firstStay.title,
+            startDate: firstStay.startDate,
+            endDate: nil,
+            confirmLocation: false,
+            in: context
+        )
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: departure.addingTimeInterval(120))
+
+        let stay = try XCTUnwrap(try context.fetch(FetchDescriptor<TimelineEpisode>()).first { $0.sourceVisitID == visit.id })
+        XCTAssertNil(stay.endDate)
+    }
+
+    @MainActor
     func testUnknownArrivalDoesNotInventStay() throws {
         let context = try makeContext()
         let departure = Date(timeIntervalSince1970: 1_786_500_000)
