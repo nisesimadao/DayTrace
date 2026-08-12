@@ -173,9 +173,7 @@ struct TimelineEngine {
                 if let longitude = assertion.replacementLongitude { episode.longitude = longitude }
             case .confirm:
                 episode.confidence = .high
-            case .suppress:
-                episode.subtitle = "非表示"
-            case .mergeStay, .splitStay:
+            case .suppress, .mergeStay, .splitStay:
                 break
             }
         }

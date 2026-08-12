@@ -46,7 +46,7 @@ final class VisitEvidence {
     @Attribute(.unique) var id: UUID
     var arrivalDate: Date?
     var departureDate: Date?
-    var observedAt: Date
+    var observedAt: Date = .distantPast
     var latitude: Double
     var longitude: Double
     var horizontalAccuracy: Double
@@ -287,6 +287,19 @@ enum UserAssertionType: String, Codable, Hashable, Sendable {
     case confirm
 }
 
+enum TimelineVisibility {
+    static func suppressedEpisodeIDs(from assertions: [UserAssertion]) -> Set<UUID> {
+        Set(assertions.compactMap { assertion in
+            guard assertion.isActive,
+                  assertion.type == .suppress,
+                  let episodeID = assertion.episodeID else {
+                return nil
+            }
+            return episodeID
+        })
+    }
+}
+
 @MainActor
 struct TimelineEditingService {
     func saveStay(
@@ -354,6 +367,38 @@ struct TimelineEditingService {
         try context.save()
     }
 
+    func setSuppressed(
+        episodeID: UUID,
+        suppressed: Bool,
+        in context: ModelContext
+    ) throws {
+        deactivateAssertions(for: episodeID, type: .suppress, in: context)
+
+        if suppressed {
+            context.insert(UserAssertion(episodeID: episodeID, type: .suppress))
+        } else {
+            clearLegacySuppressedSubtitle(for: episodeID, in: context)
+        }
+
+        try context.save()
+    }
+
+    func restoreAllSuppressed(in context: ModelContext) throws {
+        guard let assertions = try? context.fetch(FetchDescriptor<UserAssertion>()) else { return }
+        let suppressedIDs = Set(assertions.compactMap { assertion -> UUID? in
+            guard assertion.isActive, assertion.type == .suppress else { return nil }
+            assertion.isActive = false
+            return assertion.episodeID
+        })
+
+        guard !suppressedIDs.isEmpty else { return }
+        let episodes = (try? context.fetch(FetchDescriptor<TimelineEpisode>())) ?? []
+        for episode in episodes where suppressedIDs.contains(episode.id) && episode.subtitle == "非表示" {
+            episode.subtitle = nil
+        }
+        try context.save()
+    }
+
     private func migrateLegacyRetimeIfNeeded(
         for episodeID: UUID,
         startChanged: Bool,
@@ -400,6 +445,13 @@ struct TimelineEditingService {
         guard let assertions = try? context.fetch(FetchDescriptor<UserAssertion>()) else { return }
         for assertion in assertions where assertion.episodeID == episodeID && assertion.type == type && assertion.isActive {
             assertion.isActive = false
+        }
+    }
+
+    private func clearLegacySuppressedSubtitle(for episodeID: UUID, in context: ModelContext) {
+        guard let episodes = try? context.fetch(FetchDescriptor<TimelineEpisode>()) else { return }
+        if let episode = episodes.first(where: { $0.id == episodeID && $0.subtitle == "非表示" }) {
+            episode.subtitle = nil
         }
     }
 

@@ -40,7 +40,9 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
 
     func attach(context: ModelContext) {
         modelContext = context
-        try? RawEvidenceRetentionService().prune(
+        let retention = RawEvidenceRetentionService()
+        try? retention.backfillLegacyVisits(in: context)
+        try? retention.prune(
             in: context,
             retentionDays: retentionDaysFromDefaults
         )
@@ -105,7 +107,9 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         UserDefaults.standard.set(days, forKey: "rawEvidenceRetentionDays")
         guard let context = modelContext else { return }
 
-        try? RawEvidenceRetentionService().prune(
+        let retention = RawEvidenceRetentionService()
+        try? retention.backfillLegacyVisits(in: context)
+        try? retention.prune(
             in: context,
             retentionDays: days
         )
@@ -351,6 +355,21 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
 
 @MainActor
 struct RawEvidenceRetentionService {
+    func backfillLegacyVisits(in context: ModelContext) throws {
+        let visits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        var changed = false
+
+        for visit in visits where visit.observedAt == .distantPast {
+            guard let bestKnownDate = visit.departureDate ?? visit.arrivalDate else { continue }
+            visit.observedAt = bestKnownDate
+            changed = true
+        }
+
+        if changed {
+            try context.save()
+        }
+    }
+
     func prune(
         in context: ModelContext,
         retentionDays: Int,
