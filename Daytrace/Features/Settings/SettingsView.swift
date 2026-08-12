@@ -31,7 +31,11 @@ struct SettingsView: View {
                         Text("1年").tag(365)
                         Text("ずっと").tag(0)
                     }
-                    Text("日記と確定したTimelineは、生のGPSサンプルとは別に保存されます。")
+                    .onChange(of: rawEvidenceRetentionDays) { _, days in
+                        recorder.applyRetentionPolicy(days: days)
+                    }
+
+                    Text("保持期間を短くすると、それより古い生の位置データを削除します。日記と確定したTimelineは残ります。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
