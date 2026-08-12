@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import SwiftData
 
@@ -542,6 +543,26 @@ struct TimelineEditingService {
            let place = places.first(where: { $0.id == placeID }),
            place.name == name {
             place.source = .userConfirmed
+            return
+        }
+
+        let episodeLocation = CLLocation(latitude: latitude, longitude: longitude)
+        let nearbySameNamePlace = places
+            .filter { $0.name == name }
+            .compactMap { place -> (PlaceRecord, CLLocationDistance)? in
+                let distance = episodeLocation.distance(
+                    from: CLLocation(latitude: place.latitude, longitude: place.longitude)
+                )
+                let reuseDistance = min(max(place.radius, 150), 300)
+                guard distance <= reuseDistance else { return nil }
+                return (place, distance)
+            }
+            .min { $0.1 < $1.1 }?
+            .0
+
+        if let nearbySameNamePlace {
+            nearbySameNamePlace.source = .userConfirmed
+            episode.placeID = nearbySameNamePlace.id
             return
         }
 
