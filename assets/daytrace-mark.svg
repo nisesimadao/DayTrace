@@ -1,14 +1,12 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="g" x1="96" y1="80" x2="420" y2="432" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#20C7C7"/>
-      <stop offset="0.52" stop-color="#2287F4"/>
-      <stop offset="1" stop-color="#4B55E8"/>
+    <linearGradient id="g" x1="116" y1="96" x2="396" y2="416" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#21BFC3"/>
+      <stop offset="0.55" stop-color="#2686F3"/>
+      <stop offset="1" stop-color="#4C5DEB"/>
     </linearGradient>
   </defs>
-  <path d="M120 92H226C338 92 420 160 420 256C420 352 338 420 226 420H120" stroke="url(#g)" stroke-width="56" stroke-linecap="round"/>
-  <path d="M120 338C176 338 181 238 246 238C311 238 302 174 366 174" stroke="url(#g)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="120" cy="338" r="22" fill="white" stroke="#20C7C7" stroke-width="14"/>
-  <circle cx="246" cy="238" r="22" fill="white" stroke="#2287F4" stroke-width="14"/>
-  <circle cx="366" cy="174" r="22" fill="white" stroke="#4B55E8" stroke-width="14"/>
+  <path d="M132 104H226C337 104 408 166 408 256C408 346 337 408 226 408H132" stroke="url(#g)" stroke-width="58" stroke-linecap="round"/>
+  <path d="M132 334C186 334 207 260 272 260" stroke="url(#g)" stroke-width="30" stroke-linecap="round"/>
+  <circle cx="272" cy="260" r="20" fill="white" stroke="#2686F3" stroke-width="13"/>
 </svg>
