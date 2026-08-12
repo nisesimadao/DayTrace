@@ -165,7 +165,7 @@ private struct JournalingSuggestionsBridge: ViewModifier {
     func body(content: Content) -> some View {
 #if canImport(JournalingSuggestions)
         content
-            .journalingSuggestionsPicker(isPresented: $isSuggestionPickerPresented) { suggestion in
+            .journalingSuggestionsPicker(isPresented: $isPresented) { suggestion in
                 await MainActor.run {
                     onSelection(suggestion.title, suggestion.date?.start)
                 }
