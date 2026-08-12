@@ -1,4 +1,6 @@
+#if canImport(JournalingSuggestions)
 import JournalingSuggestions
+#endif
 import SwiftData
 import SwiftUI
 
@@ -43,6 +45,12 @@ struct JournalComposer: View {
                     Label("思い出す", systemImage: "sparkles")
                 }
                 .buttonStyle(.daytraceGlass)
+                .disabled(!JournalingSuggestionsBridge.isAvailable)
+                .accessibilityHint(
+                    JournalingSuggestionsBridge.isAvailable
+                        ? "システムの振り返り候補を表示します"
+                        : "この環境では振り返り候補を利用できません"
+                )
 
                 Spacer()
 
@@ -56,9 +64,10 @@ struct JournalComposer: View {
         .onAppear {
             bodyText = existingJournal?.body ?? ""
         }
-        .journalingSuggestionsPicker(isPresented: $isSuggestionPickerPresented) { suggestion in
-            await appendSuggestion(suggestion)
-        }
+        .modifier(JournalingSuggestionsBridge(
+            isPresented: $isSuggestionPickerPresented,
+            onSelection: appendSuggestion
+        ))
     }
 
     private func save() {
@@ -78,16 +87,43 @@ struct JournalComposer: View {
     }
 
     @MainActor
-    private func appendSuggestion(_ suggestion: JournalingSuggestion) async {
+    private func appendSuggestion(title: String, date: Date?) {
         let rangeText: String
-        if let date = suggestion.date {
-            rangeText = "（\(TimelineFormatting.clock(date.start, timeZoneIdentifier: day.timeZone.identifier))ごろ）"
+        if let date {
+            rangeText = "（\(TimelineFormatting.clock(date, timeZoneIdentifier: day.timeZone.identifier))ごろ）"
         } else {
             rangeText = ""
         }
 
         let prefix = bodyText.isEmpty ? "" : "\n"
-        bodyText += "\(prefix)\(suggestion.title)\(rangeText)\n"
+        bodyText += "\(prefix)\(title)\(rangeText)\n"
         isFocused = true
+    }
+}
+
+private struct JournalingSuggestionsBridge: ViewModifier {
+    @Binding var isPresented: Bool
+    let onSelection: @MainActor (String, Date?) -> Void
+
+    static var isAvailable: Bool {
+#if canImport(JournalingSuggestions)
+        true
+#else
+        false
+#endif
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+#if canImport(JournalingSuggestions)
+        content
+            .journalingSuggestionsPicker(isPresented: $isPresented) { suggestion in
+                await MainActor.run {
+                    onSelection(suggestion.title, suggestion.date?.start)
+                }
+            }
+#else
+        content
+#endif
     }
 }
