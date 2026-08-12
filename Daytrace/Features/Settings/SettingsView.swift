@@ -19,12 +19,14 @@ struct SettingsView: View {
 
     @AppStorage("detailedRoutesEnabled") private var detailedRoutesEnabled = false
     @AppStorage("rawEvidenceRetentionDays") private var rawEvidenceRetentionDays = 90
+    @AppStorage("appLockEnabled") private var appLockEnabled = false
 
     @State private var exportDocument: DayTraceExportDocument?
     @State private var exportContentType: UTType = .json
     @State private var exportFilename = "DayTrace"
     @State private var isExportPresented = false
     @State private var exportErrorMessage: String?
+    @State private var appLockErrorMessage: String?
 
     private var suppressedCount: Int {
         TimelineVisibility.suppressedEpisodeIDs(from: assertions).count
@@ -33,6 +35,23 @@ struct SettingsView: View {
     private var visibleEpisodes: [TimelineEpisode] {
         let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
         return episodes.filter { !suppressed.contains($0.id) }
+    }
+
+    private var appLockBinding: Binding<Bool> {
+        Binding(
+            get: { appLockEnabled },
+            set: { enabled in
+                if enabled {
+                    if AppLockAvailability.canEnable() {
+                        appLockEnabled = true
+                    } else {
+                        appLockErrorMessage = "端末のパスコードまたは生体認証を有効にしてから、もう一度試してください。"
+                    }
+                } else {
+                    appLockEnabled = false
+                }
+            }
+        )
     }
 
     var body: some View {
@@ -54,7 +73,20 @@ struct SettingsView: View {
                     Text("詳細な経路は必要な場面で位置更新を増やすため、バッテリー消費が増える場合があります。")
                 }
 
-                Section("プライバシー") {
+                Section {
+                    Toggle("アプリをロック", isOn: appLockBinding)
+                        .alert(
+                            "アプリをロックできません",
+                            isPresented: Binding(
+                                get: { appLockErrorMessage != nil },
+                                set: { if !$0 { appLockErrorMessage = nil } }
+                            )
+                        ) {
+                            Button("OK", role: .cancel) { appLockErrorMessage = nil }
+                        } message: {
+                            Text(appLockErrorMessage ?? "")
+                        }
+
                     Picker("生の位置データ", selection: $rawEvidenceRetentionDays) {
                         Text("30日").tag(30)
                         Text("90日").tag(90)
@@ -64,10 +96,13 @@ struct SettingsView: View {
                     .onChange(of: rawEvidenceRetentionDays) { _, days in
                         recorder.applyRetentionPolicy(days: days)
                     }
-
-                    Text("保持期間を短くすると、それより古い生の位置データを削除します。日記と確定したTimelineは残ります。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("プライバシー")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("アプリロックを有効にすると、次回からFace ID・Touch ID・端末パスコードで位置履歴と日記を保護します。App Switcherでは設定に関係なく内容を隠します。")
+                        Text("保持期間を短くすると、それより古い生の位置データを削除します。日記と確定したTimelineは残ります。")
+                    }
                 }
 
                 Section("データ") {
@@ -441,7 +476,7 @@ private enum DayTraceExportBuilder {
     ) -> String {
         var days = Set<CalendarDay>()
         for episode in episodes {
-            days.formUnion(TimelineDayProjection.coveredDays(by: episode, openEndedAt: now, limit: 366))
+            days.formUnion(TimelineDayProjection.coveredDays(by: episode, openEndedAt: now, limit: 10_000))
         }
         for journal in journals {
             days.insert(TimelineDayProjection.day(for: journal))
