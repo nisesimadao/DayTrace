@@ -15,21 +15,19 @@ struct DayMap: View {
         Map(position: $position, interactionModes: [.pan, .zoom]) {
             ForEach(locatableEpisodes) { episode in
                 if let latitude = episode.latitude, let longitude = episode.longitude {
-                    Annotation(episode.title, coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)) {
+                    Annotation(
+                        episode.title,
+                        coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+                    ) {
                         Button {
                             withAnimation(.snappy) {
                                 selectedEpisodeID = episode.id
                             }
                         } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(.background)
-                                    .frame(width: selectedEpisodeID == episode.id ? 34 : 28)
-                                    .shadow(radius: 3, y: 1)
-                                Circle()
-                                    .fill(episode.confidence == .low ? .secondary : .tint)
-                                    .frame(width: selectedEpisodeID == episode.id ? 18 : 14)
-                            }
+                            DayMapMarker(
+                                isSelected: selectedEpisodeID == episode.id,
+                                confidence: episode.confidence
+                            )
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(episode.title)を選択")
@@ -43,6 +41,28 @@ struct DayMap: View {
         .overlay {
             RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
                 .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
+        }
+    }
+}
+
+private struct DayMapMarker: View {
+    let isSelected: Bool
+    let confidence: EpisodeConfidence
+
+    private var outerSize: CGFloat { isSelected ? 34 : 28 }
+    private var innerSize: CGFloat { isSelected ? 18 : 14 }
+    private var innerColor: Color { confidence == .low ? .secondary : .accentColor }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(.systemBackground))
+                .frame(width: outerSize, height: outerSize)
+                .shadow(radius: 3, y: 1)
+
+            Circle()
+                .fill(innerColor)
+                .frame(width: innerSize, height: innerSize)
         }
     }
 }
