@@ -465,6 +465,8 @@ struct TimelineEditingService {
         let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
         guard let place = places.first(where: { $0.id == placeID }), place.name != title else { return }
         episode.placeID = nil
+        episode.confidence = .medium
+        episode.subtitle = "場所を確認"
     }
 
     private func learnConfirmedPlace(for episode: TimelineEpisode, name: String, in context: ModelContext) {
