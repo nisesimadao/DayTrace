@@ -300,6 +300,53 @@ enum TimelineVisibility {
     }
 }
 
+enum TimelineEditingError: LocalizedError, Equatable {
+    case invalidStayRange
+    case overlapsStay(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidStayRange:
+            "出発時刻は到着時刻より後にしてください。"
+        case .overlapsStay(let title):
+            "「\(title)」と時間が重なっています。"
+        }
+    }
+}
+
+@MainActor
+enum StayIntervalValidator {
+    static func validationError(
+        episodeID: UUID,
+        startDate: Date,
+        endDate: Date?,
+        episodes: [TimelineEpisode],
+        suppressedEpisodeIDs: Set<UUID>
+    ) -> TimelineEditingError? {
+        if let endDate, endDate <= startDate {
+            return .invalidStayRange
+        }
+
+        let proposedEnd = endDate ?? .distantFuture
+        let conflict = episodes
+            .filter {
+                $0.kind == .stay
+                    && $0.id != episodeID
+                    && !suppressedEpisodeIDs.contains($0.id)
+            }
+            .sorted { $0.startDate < $1.startDate }
+            .first { other in
+                let otherEnd = other.endDate ?? .distantFuture
+                return startDate < otherEnd && proposedEnd > other.startDate
+            }
+
+        if let conflict {
+            return .overlapsStay(conflict.title)
+        }
+        return nil
+    }
+}
+
 @MainActor
 struct TimelineEditingService {
     func saveStay(
@@ -312,6 +359,24 @@ struct TimelineEditingService {
     ) throws {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeTitle = trimmedTitle.isEmpty ? episode.title : trimmedTitle
+        let startChanged = startDate != episode.startDate
+        let endChanged = endDate != episode.endDate
+
+        if startChanged || endChanged {
+            let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+            let assertions = try context.fetch(FetchDescriptor<UserAssertion>())
+            let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
+
+            if let validationError = StayIntervalValidator.validationError(
+                episodeID: episode.id,
+                startDate: startDate,
+                endDate: endDate,
+                episodes: episodes,
+                suppressedEpisodeIDs: suppressedEpisodeIDs
+            ) {
+                throw validationError
+            }
+        }
 
         if safeTitle != episode.title {
             deactivateAssertions(for: episode.id, type: .rename, in: context)
@@ -324,8 +389,6 @@ struct TimelineEditingService {
             detachMismatchedPlace(from: episode, title: safeTitle, in: context)
         }
 
-        let startChanged = startDate != episode.startDate
-        let endChanged = endDate != episode.endDate
         if startChanged || endChanged {
             migrateLegacyRetimeIfNeeded(
                 for: episode.id,

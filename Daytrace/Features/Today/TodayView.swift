@@ -123,6 +123,7 @@ struct TodayView: View {
             suppressed: true,
             in: modelContext
         )
+        try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
         if selectedEpisodeID == episode.id {
             selectedEpisodeID = nil
         }
@@ -135,6 +136,7 @@ struct TodayView: View {
             suppressed: false,
             in: modelContext
         )
+        try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
         undoSuppressedEpisodeID = nil
     }
 }
@@ -227,12 +229,15 @@ private struct StayEditorSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \TimelineEpisode.startDate) private var allEpisodes: [TimelineEpisode]
+    @Query(sort: \UserAssertion.createdAt) private var allAssertions: [UserAssertion]
 
     @State private var title: String
     @State private var startDate: Date
     @State private var endDate: Date
     @State private var isOngoing: Bool
     @State private var shouldConfirmLocation = false
+    @State private var saveErrorMessage: String?
 
     init(episode: TimelineEpisode) {
         self.episode = episode
@@ -258,6 +263,25 @@ private struct StayEditorSheet: View {
         shouldConfirmLocation
             && !trimmedTitle.isEmpty
             && (episode.confidence != .high || hasEditedPlaceName)
+    }
+
+    private var proposedEndDate: Date? {
+        isOngoing ? nil : endDate
+    }
+
+    private var hasEditedTime: Bool {
+        startDate != episode.startDate || proposedEndDate != episode.endDate
+    }
+
+    private var intervalValidationError: TimelineEditingError? {
+        guard hasEditedTime else { return nil }
+        return StayIntervalValidator.validationError(
+            episodeID: episode.id,
+            startDate: startDate,
+            endDate: proposedEndDate,
+            episodes: allEpisodes,
+            suppressedEpisodeIDs: TimelineVisibility.suppressedEpisodeIDs(from: allAssertions)
+        )
     }
 
     var body: some View {
@@ -286,8 +310,8 @@ private struct StayEditorSheet: View {
                 } header: {
                     Text("時刻")
                 } footer: {
-                    if !isOngoing && endDate <= startDate {
-                        Text("出発時刻は到着時刻より後にしてください。")
+                    if let intervalValidationError {
+                        Text(intervalValidationError.localizedDescription)
                             .foregroundStyle(.red)
                     } else {
                         Text("ここで直した内容は、位置情報を再解析しても優先して残します。")
@@ -302,22 +326,40 @@ private struct StayEditorSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: save)
-                        .disabled(!isOngoing && endDate <= startDate)
+                        .disabled(intervalValidationError != nil)
                 }
             }
         }
         .presentationDetents([.medium, .large])
+        .alert(
+            "保存できません",
+            isPresented: Binding(
+                get: { saveErrorMessage != nil },
+                set: { if !$0 { saveErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { saveErrorMessage = nil }
+        } message: {
+            Text(saveErrorMessage ?? "")
+        }
     }
 
     private func save() {
-        try? TimelineEditingService().saveStay(
-            episode,
-            title: title,
-            startDate: startDate,
-            endDate: isOngoing ? nil : endDate,
-            confirmLocation: shouldApplyConfirmation,
-            in: modelContext
-        )
+        do {
+            try TimelineEditingService().saveStay(
+                episode,
+                title: title,
+                startDate: startDate,
+                endDate: proposedEndDate,
+                confirmLocation: shouldApplyConfirmation,
+                in: modelContext
+            )
+        } catch {
+            saveErrorMessage = error.localizedDescription
+            return
+        }
+
+        try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
         dismiss()
     }
 }

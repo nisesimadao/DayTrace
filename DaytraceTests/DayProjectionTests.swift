@@ -328,6 +328,122 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testOverlappingRetimeIsRejectedWithoutMutation() throws {
+        let context = try makeContext()
+        let first = insertCanonicalStay(title: "学校", in: context)
+        let second = insertCanonicalStay(
+            title: "塾",
+            start: baseTime.addingTimeInterval(2 * 60 * 60),
+            in: context
+        )
+        try context.save()
+        let originalEnd = first.endDate
+
+        XCTAssertThrowsError(
+            try TimelineEditingService().saveStay(
+                first,
+                title: first.title,
+                startDate: first.startDate,
+                endDate: second.startDate.addingTimeInterval(30 * 60),
+                confirmLocation: false,
+                in: context
+            )
+        ) { error in
+            guard let editingError = error as? TimelineEditingError else {
+                return XCTFail("Expected TimelineEditingError")
+            }
+            XCTAssertEqual(editingError, .overlapsStay("塾"))
+        }
+
+        XCTAssertEqual(first.endDate, originalEnd)
+        XCTAssertFalse(
+            try context.fetch(FetchDescriptor<UserAssertion>()).contains {
+                $0.episodeID == first.id
+                    && $0.isActive
+                    && ($0.type == .retime || $0.type == .retimeStart || $0.type == .retimeEnd)
+            }
+        )
+    }
+
+    @MainActor
+    func testExactBoundaryRetimeIsAllowed() throws {
+        let context = try makeContext()
+        let first = insertCanonicalStay(title: "学校", in: context)
+        let second = insertCanonicalStay(
+            title: "塾",
+            start: baseTime.addingTimeInterval(2 * 60 * 60),
+            in: context
+        )
+        try context.save()
+
+        try TimelineEditingService().saveStay(
+            first,
+            title: first.title,
+            startDate: first.startDate,
+            endDate: second.startDate,
+            confirmLocation: false,
+            in: context
+        )
+
+        XCTAssertEqual(first.endDate, second.startDate)
+    }
+
+    @MainActor
+    func testOngoingRetimeIsRejectedWhenFutureStayExists() throws {
+        let context = try makeContext()
+        let first = insertCanonicalStay(title: "学校", in: context)
+        insertCanonicalStay(
+            title: "塾",
+            start: baseTime.addingTimeInterval(2 * 60 * 60),
+            in: context
+        )
+        try context.save()
+
+        XCTAssertThrowsError(
+            try TimelineEditingService().saveStay(
+                first,
+                title: first.title,
+                startDate: first.startDate,
+                endDate: nil,
+                confirmLocation: false,
+                in: context
+            )
+        ) { error in
+            guard let editingError = error as? TimelineEditingError else {
+                return XCTFail("Expected TimelineEditingError")
+            }
+            XCTAssertEqual(editingError, .overlapsStay("塾"))
+        }
+        XCTAssertNotNil(first.endDate)
+    }
+
+    @MainActor
+    func testSuppressedStayDoesNotBlockRetime() throws {
+        let context = try makeContext()
+        let first = insertCanonicalStay(title: "学校", in: context)
+        let hidden = insertCanonicalStay(
+            title: "誤記録",
+            start: baseTime.addingTimeInterval(2 * 60 * 60),
+            in: context
+        )
+        try context.save()
+
+        let editor = TimelineEditingService()
+        try editor.setSuppressed(episodeID: hidden.id, suppressed: true, in: context)
+        let newEnd = hidden.startDate.addingTimeInterval(30 * 60)
+        try editor.saveStay(
+            first,
+            title: first.title,
+            startDate: first.startDate,
+            endDate: newEnd,
+            confirmLocation: false,
+            in: context
+        )
+
+        XCTAssertEqual(first.endDate, newEnd)
+    }
+
+    @MainActor
     func testRetentionPrunesOnlyRawEvidence() throws {
         let context = try makeContext()
         let oldDate = baseTime.addingTimeInterval(-40 * 86_400)
@@ -442,6 +558,57 @@ final class DayProjectionTests: XCTestCase {
             TimelineVisibility.suppressedEpisodeIDs(from: try context.fetch(FetchDescriptor<UserAssertion>())).isEmpty
         )
         XCTAssertEqual(try context.fetch(FetchDescriptor<TimelineEpisode>()).count, 2)
+    }
+
+    @MainActor
+    func testSuppressingMiddleStayRebuildsTransitionAcrossIt() throws {
+        let context = try makeContext()
+        let firstDeparture = baseTime.addingTimeInterval(60 * 60)
+        let middleArrival = baseTime.addingTimeInterval(2 * 60 * 60)
+        let middleDeparture = baseTime.addingTimeInterval(3 * 60 * 60)
+        let thirdArrival = baseTime.addingTimeInterval(4 * 60 * 60)
+        let thirdDeparture = baseTime.addingTimeInterval(5 * 60 * 60)
+
+        let firstVisit = insertVisit(
+            arrival: baseTime,
+            departure: firstDeparture,
+            observedAt: firstDeparture,
+            in: context
+        )
+        let middleVisit = insertVisit(
+            arrival: middleArrival,
+            departure: middleDeparture,
+            observedAt: middleDeparture,
+            latitude: 34.67,
+            longitude: 133.93,
+            in: context
+        )
+        insertVisit(
+            arrival: thirdArrival,
+            departure: thirdDeparture,
+            observedAt: thirdDeparture,
+            latitude: 34.68,
+            longitude: 133.94,
+            in: context
+        )
+        try context.save()
+
+        let engine = TimelineEngine()
+        try engine.rebuildRecentTimeline(in: context, now: thirdDeparture)
+        let middleStay = try stay(for: middleVisit.id, in: context)
+        try TimelineEditingService().setSuppressed(
+            episodeID: middleStay.id,
+            suppressed: true,
+            in: context
+        )
+        try engine.rebuildRecentTimeline(in: context, now: thirdDeparture)
+
+        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        let gaps = episodes.filter { $0.kind == .gap }
+        XCTAssertEqual(gaps.count, 1)
+        XCTAssertEqual(gaps.first?.startDate, firstDeparture)
+        XCTAssertEqual(gaps.first?.endDate, thirdArrival)
+        XCTAssertNotNil(try stay(for: firstVisit.id, in: context))
     }
 
     @MainActor
