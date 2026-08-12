@@ -236,6 +236,105 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testRetentionPrunesOnlyRawEvidence() throws {
+        let context = try makeContext()
+        let now = Date(timeIntervalSince1970: 1_786_500_000)
+        let oldDate = now.addingTimeInterval(-40 * 86_400)
+        let freshDate = now.addingTimeInterval(-5 * 86_400)
+
+        context.insert(LocationEvidence(
+            timestamp: oldDate,
+            latitude: 34.66,
+            longitude: 133.92,
+            horizontalAccuracy: 20,
+            speed: 0,
+            course: 0,
+            source: .standardLocation,
+            timeZoneIdentifier: "Asia/Tokyo"
+        ))
+        context.insert(LocationEvidence(
+            timestamp: freshDate,
+            latitude: 34.67,
+            longitude: 133.93,
+            horizontalAccuracy: 20,
+            speed: 0,
+            course: 0,
+            source: .standardLocation,
+            timeZoneIdentifier: "Asia/Tokyo"
+        ))
+        context.insert(VisitEvidence(
+            arrivalDate: oldDate,
+            departureDate: oldDate.addingTimeInterval(60 * 60),
+            observedAt: oldDate,
+            latitude: 34.66,
+            longitude: 133.92,
+            horizontalAccuracy: 20,
+            timeZoneIdentifier: "Asia/Tokyo"
+        ))
+        context.insert(VisitEvidence(
+            arrivalDate: freshDate,
+            departureDate: freshDate.addingTimeInterval(60 * 60),
+            observedAt: freshDate,
+            latitude: 34.67,
+            longitude: 133.93,
+            horizontalAccuracy: 20,
+            timeZoneIdentifier: "Asia/Tokyo"
+        ))
+        let canonicalEpisode = TimelineEpisode(
+            kind: .stay,
+            startDate: oldDate,
+            endDate: oldDate.addingTimeInterval(60 * 60),
+            title: "古い思い出",
+            confidence: .high,
+            sourceVersion: 5,
+            timeZoneIdentifier: "Asia/Tokyo"
+        )
+        context.insert(canonicalEpisode)
+        try context.save()
+
+        try RawEvidenceRetentionService().prune(
+            in: context,
+            retentionDays: 30,
+            now: now
+        )
+
+        let locations = try context.fetch(FetchDescriptor<LocationEvidence>())
+        let visits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        XCTAssertEqual(locations.count, 1)
+        XCTAssertEqual(locations.first?.timestamp, freshDate)
+        XCTAssertEqual(visits.count, 1)
+        XCTAssertEqual(visits.first?.observedAt, freshDate)
+        XCTAssertTrue(episodes.contains { $0.id == canonicalEpisode.id })
+    }
+
+    @MainActor
+    func testForeverRetentionDoesNotDeleteRawEvidence() throws {
+        let context = try makeContext()
+        let now = Date(timeIntervalSince1970: 1_786_500_000)
+        let oldDate = now.addingTimeInterval(-400 * 86_400)
+        context.insert(LocationEvidence(
+            timestamp: oldDate,
+            latitude: 34.66,
+            longitude: 133.92,
+            horizontalAccuracy: 20,
+            speed: 0,
+            course: 0,
+            source: .standardLocation,
+            timeZoneIdentifier: "Asia/Tokyo"
+        ))
+        try context.save()
+
+        try RawEvidenceRetentionService().prune(
+            in: context,
+            retentionDays: 0,
+            now: now
+        )
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<LocationEvidence>()).count, 1)
+    }
+
+    @MainActor
     func testTransitionWithoutSamplesBecomesGap() throws {
         let context = try makeContext()
         let start = Date(timeIntervalSince1970: 1_786_500_000)
