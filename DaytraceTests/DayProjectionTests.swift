@@ -39,12 +39,12 @@ final class DayProjectionTests: XCTestCase {
         try context.save()
 
         try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60))
-        let stay = try firstStay(in: context)
+        let first = try firstStay(in: context)
         try TimelineEditingService().saveStay(
-            stay,
+            first,
             title: "学校",
-            startDate: stay.startDate,
-            endDate: stay.endDate,
+            startDate: first.startDate,
+            endDate: first.endDate,
             confirmLocation: false,
             in: context
         )
