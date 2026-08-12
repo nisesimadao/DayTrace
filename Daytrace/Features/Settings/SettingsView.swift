@@ -1,9 +1,11 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.openURL) private var openURL
     @Environment(LocationRecorder.self) private var recorder
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
 
@@ -20,6 +22,8 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("状態", value: healthLabel)
                     LabeledContent("位置情報", value: authorizationLabel)
+
+                    permissionRecoveryControl
 
                     Toggle("詳細な移動経路を記録", isOn: $detailedRoutesEnabled)
                         .onChange(of: detailedRoutesEnabled) { _, enabled in
@@ -71,6 +75,37 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var permissionRecoveryControl: some View {
+        switch recorder.authorizationStatus {
+        case .notDetermined:
+            Button("位置情報を許可") {
+                recorder.requestWhenInUse()
+            }
+        case .authorizedWhenInUse:
+            Button("「常に許可」に変更") {
+                openSystemSettings()
+            }
+        case .denied:
+            Button("位置情報をオンにする") {
+                openSystemSettings()
+            }
+        case .restricted:
+            Text("この端末では位置情報の変更が制限されています。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .authorizedAlways:
+            EmptyView()
+        @unknown default:
+            EmptyView()
+        }
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        openURL(url)
     }
 
     private var healthLabel: String {
