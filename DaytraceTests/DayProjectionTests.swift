@@ -212,6 +212,122 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testUnnamedPlaceCannotBeConfirmed() throws {
+        let context = try makeContext()
+        let stay = TimelineEpisode(
+            kind: .stay,
+            startDate: baseTime,
+            endDate: baseTime.addingTimeInterval(60 * 60),
+            title: "未設定の場所",
+            subtitle: "場所を確認",
+            latitude: 34.66,
+            longitude: 133.92,
+            confidence: .low,
+            sourceVersion: 5,
+            timeZoneIdentifier: zone
+        )
+        context.insert(stay)
+        try context.save()
+
+        try TimelineEditingService().saveStay(
+            stay,
+            title: "",
+            startDate: stay.startDate,
+            endDate: stay.endDate,
+            confirmLocation: true,
+            in: context
+        )
+
+        XCTAssertEqual(stay.confidence, .low)
+        XCTAssertEqual(stay.subtitle, "場所を確認")
+        XCTAssertNil(stay.placeID)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PlaceRecord>()).isEmpty)
+        XCTAssertFalse(try context.fetch(FetchDescriptor<UserAssertion>()).contains { $0.type == .confirm && $0.isActive })
+    }
+
+    @MainActor
+    func testRenamingResolvedStayDoesNotRenameExistingPlace() throws {
+        let context = try makeContext()
+        let originalPlace = PlaceRecord(
+            name: "学校",
+            latitude: 34.66,
+            longitude: 133.92,
+            radius: 100,
+            source: .userConfirmed
+        )
+        context.insert(originalPlace)
+        insertVisit(
+            arrival: baseTime,
+            departure: baseTime.addingTimeInterval(60 * 60),
+            observedAt: baseTime,
+            in: context
+        )
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60 * 60))
+        let stay = try firstStay(in: context)
+        XCTAssertEqual(stay.placeID, originalPlace.id)
+
+        try TimelineEditingService().saveStay(
+            stay,
+            title: "塾",
+            startDate: stay.startDate,
+            endDate: stay.endDate,
+            confirmLocation: false,
+            in: context
+        )
+
+        XCTAssertEqual(originalPlace.name, "学校")
+        XCTAssertEqual(stay.title, "塾")
+        XCTAssertNil(stay.placeID)
+        XCTAssertEqual(stay.confidence, .medium)
+        XCTAssertEqual(stay.subtitle, "場所を確認")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PlaceRecord>()).count, 1)
+    }
+
+    @MainActor
+    func testConfirmingCorrectedStayLearnsNewPlaceWithoutMutatingOldPlace() throws {
+        let context = try makeContext()
+        let originalPlace = PlaceRecord(
+            name: "学校",
+            latitude: 34.66,
+            longitude: 133.92,
+            radius: 100,
+            source: .userConfirmed
+        )
+        context.insert(originalPlace)
+        insertVisit(
+            arrival: baseTime,
+            departure: baseTime.addingTimeInterval(60 * 60),
+            observedAt: baseTime,
+            in: context
+        )
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60 * 60))
+        let stay = try firstStay(in: context)
+
+        try TimelineEditingService().saveStay(
+            stay,
+            title: "塾",
+            startDate: stay.startDate,
+            endDate: stay.endDate,
+            confirmLocation: true,
+            in: context
+        )
+
+        let places = try context.fetch(FetchDescriptor<PlaceRecord>())
+        let learned = try XCTUnwrap(places.first { $0.id != originalPlace.id })
+        XCTAssertEqual(originalPlace.name, "学校")
+        XCTAssertEqual(learned.name, "塾")
+        XCTAssertEqual(learned.source, .userConfirmed)
+        XCTAssertEqual(stay.placeID, learned.id)
+        XCTAssertEqual(stay.confidence, .high)
+        XCTAssertNil(stay.subtitle)
+        XCTAssertEqual(places.count, 2)
+    }
+
+    @MainActor
     func testRetentionPrunesOnlyRawEvidence() throws {
         let context = try makeContext()
         let oldDate = baseTime.addingTimeInterval(-40 * 86_400)

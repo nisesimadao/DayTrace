@@ -321,7 +321,7 @@ struct TimelineEditingService {
                 replacementTitle: safeTitle
             ))
             episode.title = safeTitle
-            upsertPlace(for: episode, name: safeTitle, in: context)
+            detachMismatchedPlace(from: episode, title: safeTitle, in: context)
         }
 
         let startChanged = startDate != episode.startDate
@@ -355,13 +355,16 @@ struct TimelineEditingService {
             episode.endDate = endDate
         }
 
-        if confirmLocation, episode.confidence != .high {
+        let canConfirmLocation = confirmLocation
+            && !safeTitle.isEmpty
+            && safeTitle != "未設定の場所"
+
+        if canConfirmLocation, episode.confidence != .high {
             deactivateAssertions(for: episode.id, type: .confirm, in: context)
             context.insert(UserAssertion(episodeID: episode.id, type: .confirm))
             episode.confidence = .high
-            if !safeTitle.isEmpty, safeTitle != "未設定の場所" {
-                upsertPlace(for: episode, name: safeTitle, in: context)
-            }
+            episode.subtitle = nil
+            learnConfirmedPlace(for: episode, name: safeTitle, in: context)
         }
 
         try context.save()
@@ -455,14 +458,26 @@ struct TimelineEditingService {
         }
     }
 
-    private func upsertPlace(for episode: TimelineEpisode, name: String, in context: ModelContext) {
+    private func detachMismatchedPlace(
+        from episode: TimelineEpisode,
+        title: String,
+        in context: ModelContext
+    ) {
+        guard let placeID = episode.placeID else { return }
+        let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
+        guard let place = places.first(where: { $0.id == placeID }), place.name != title else { return }
+        episode.placeID = nil
+        episode.confidence = .medium
+        episode.subtitle = "場所を確認"
+    }
+
+    private func learnConfirmedPlace(for episode: TimelineEpisode, name: String, in context: ModelContext) {
         guard let latitude = episode.latitude, let longitude = episode.longitude else { return }
         let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
 
-        if let placeID = episode.placeID, let place = places.first(where: { $0.id == placeID }) {
-            place.name = name
-            place.latitude = latitude
-            place.longitude = longitude
+        if let placeID = episode.placeID,
+           let place = places.first(where: { $0.id == placeID }),
+           place.name == name {
             place.source = .userConfirmed
             return
         }
