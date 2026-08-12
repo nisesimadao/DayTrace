@@ -4,7 +4,8 @@ import SwiftData
 
 @MainActor
 struct TimelineEngine {
-    static let sourceVersion = 4
+    static let sourceVersion = 5
+    private static let maximumPlaceResolutionAccuracy: CLLocationAccuracy = 250
 
     func rebuildRecentTimeline(in context: ModelContext, now: Date = .now) throws {
         let horizon = now.addingTimeInterval(-60 * 60 * 48)
@@ -63,9 +64,7 @@ struct TimelineEngine {
             let resolvedPlace = nearestPlace(to: visit, in: context)
             let inferredTitle = resolvedPlace?.name ?? "未設定の場所"
             let inferredSubtitle = resolvedPlace == nil ? "場所を確認" : nil
-            let inferredConfidence: EpisodeConfidence = resolvedPlace != nil
-                ? .high
-                : (visit.horizontalAccuracy <= 100 ? .medium : .low)
+            let confidence = inferredConfidence(for: visit, resolvedPlace: resolvedPlace)
 
             if let episode = stayByVisitID[visit.id] {
                 reconcile(
@@ -74,7 +73,7 @@ struct TimelineEngine {
                     arrival: arrival,
                     inferredTitle: inferredTitle,
                     inferredSubtitle: inferredSubtitle,
-                    inferredConfidence: inferredConfidence,
+                    inferredConfidence: confidence,
                     resolvedPlace: resolvedPlace,
                     assertions: assertionsByEpisode[episode.id] ?? []
                 )
@@ -87,7 +86,7 @@ struct TimelineEngine {
                     subtitle: inferredSubtitle,
                     latitude: visit.latitude,
                     longitude: visit.longitude,
-                    confidence: inferredConfidence,
+                    confidence: confidence,
                     placeID: resolvedPlace?.id,
                     sourceVisitID: visit.id,
                     sourceVersion: Self.sourceVersion,
@@ -205,6 +204,10 @@ struct TimelineEngine {
     }
 
     private func nearestPlace(to visit: VisitEvidence, in context: ModelContext) -> PlaceRecord? {
+        guard visit.horizontalAccuracy >= 0,
+              visit.horizontalAccuracy <= Self.maximumPlaceResolutionAccuracy else {
+            return nil
+        }
         guard let places = try? context.fetch(FetchDescriptor<PlaceRecord>()), !places.isEmpty else { return nil }
         let visitLocation = CLLocation(latitude: visit.latitude, longitude: visit.longitude)
 
@@ -213,12 +216,24 @@ struct TimelineEngine {
                 let distance = visitLocation.distance(
                     from: CLLocation(latitude: place.latitude, longitude: place.longitude)
                 )
-                let allowedDistance = max(place.radius, max(visit.horizontalAccuracy, 0))
+                let allowedDistance = max(place.radius, visit.horizontalAccuracy)
                 guard distance <= allowedDistance else { return nil }
                 return (place, distance)
             }
             .min { $0.1 < $1.1 }?
             .0
+    }
+
+    private func inferredConfidence(
+        for visit: VisitEvidence,
+        resolvedPlace: PlaceRecord?
+    ) -> EpisodeConfidence {
+        guard visit.horizontalAccuracy >= 0 else { return .low }
+
+        if resolvedPlace != nil {
+            return visit.horizontalAccuracy <= 75 ? .high : .medium
+        }
+        return visit.horizontalAccuracy <= 100 ? .medium : .low
     }
 
     private func visitStart(_ visit: VisitEvidence) -> Date {
