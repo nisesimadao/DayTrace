@@ -33,6 +33,7 @@ struct TimelineEngine {
         }
 
         let activeAssertionEpisodeIDs = Set(assertionsByEpisode.keys)
+        let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
         let currentVisitIDs = Set(visits.map(\.id))
 
         for episode in existingEpisodes where episode.startDate >= horizon && episode.kind != .stay {
@@ -98,7 +99,10 @@ struct TimelineEngine {
         }
 
         let canonicalStays = stayByVisitID.values
-            .filter { $0.startDate >= horizon || ($0.endDate ?? .distantFuture) >= horizon }
+            .filter {
+                !suppressedEpisodeIDs.contains($0.id)
+                    && ($0.startDate >= horizon || ($0.endDate ?? .distantFuture) >= horizon)
+            }
             .sorted { $0.startDate < $1.startDate }
 
         for pair in zip(canonicalStays, canonicalStays.dropFirst()) {
