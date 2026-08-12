@@ -1,12 +1,15 @@
+import Foundation
 import SwiftData
 import SwiftUI
 
 struct HistoryView: View {
     @Query(sort: \TimelineEpisode.startDate, order: .reverse) private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor, order: .reverse) private var journals: [JournalEntry]
+    @Query(sort: \MomentNote.timestamp, order: .reverse) private var momentNotes: [MomentNote]
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
 
     @State private var displayedMonth = Date.now
+    @State private var searchText = ""
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
 
@@ -15,31 +18,42 @@ struct HistoryView: View {
         return episodes.filter { !suppressed.contains($0.id) }
     }
 
+    private var trimmedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DS.sectionSpacing) {
-                MonthHeader(displayedMonth: $displayedMonth)
-                MonthGrid(
-                    displayedMonth: displayedMonth,
+            if trimmedSearchText.isEmpty {
+                VStack(alignment: .leading, spacing: DS.sectionSpacing) {
+                    MonthHeader(displayedMonth: $displayedMonth)
+                    MonthGrid(
+                        displayedMonth: displayedMonth,
+                        episodes: visibleEpisodes,
+                        journals: journals,
+                        columns: columns
+                    )
+                    RecentDaysList(episodes: visibleEpisodes, journals: journals)
+                }
+                .padding(.horizontal, DS.horizontalPadding)
+                .padding(.bottom, 40)
+            } else {
+                HistorySearchResults(
+                    query: trimmedSearchText,
                     episodes: visibleEpisodes,
                     journals: journals,
-                    columns: columns
+                    momentNotes: momentNotes
                 )
-                RecentDaysList(episodes: visibleEpisodes, journals: journals)
+                .padding(.horizontal, DS.horizontalPadding)
+                .padding(.bottom, 40)
             }
-            .padding(.horizontal, DS.horizontalPadding)
-            .padding(.bottom, 40)
         }
         .navigationTitle("履歴")
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button { } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-                .disabled(true)
-                .accessibilityLabel("検索 — 今後の実装")
-            }
-        }
+        .searchable(
+            text: $searchText,
+            placement: .navigationBarDrawer(displayMode: .automatic),
+            prompt: "場所・日記・メモを検索"
+        )
     }
 }
 
@@ -224,5 +238,146 @@ private struct RecentDayRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
+    }
+}
+
+private struct HistorySearchResults: View {
+    let query: String
+    let episodes: [TimelineEpisode]
+    let journals: [JournalEntry]
+    let momentNotes: [MomentNote]
+
+    private var matchingDays: [CalendarDay] {
+        var days = Set<CalendarDay>()
+
+        for episode in episodes where matches(episode) {
+            days.formUnion(
+                TimelineDayProjection.coveredDays(
+                    by: episode,
+                    limit: 10_000
+                )
+            )
+        }
+
+        for journal in journals where contains(journal.body) {
+            days.insert(TimelineDayProjection.day(for: journal))
+        }
+
+        for note in momentNotes where contains(note.body) {
+            let zone = TimelineDayProjection.timeZone(identifier: note.timeZoneIdentifier)
+            days.insert(CalendarDay(containing: note.timestamp, timeZone: zone))
+        }
+
+        return Array(days.sorted(by: >).prefix(80))
+    }
+
+    var body: some View {
+        LazyVStack(alignment: .leading, spacing: 18) {
+            if matchingDays.isEmpty {
+                ContentUnavailableView {
+                    Label("見つかりませんでした", systemImage: "magnifyingglass")
+                } description: {
+                    Text("場所の名前、日記、メモの言葉を変えて試してください。")
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 70)
+            } else {
+                Text("\(matchingDays.count)日の記録")
+                    .font(.headline)
+                    .padding(.top, 12)
+
+                ForEach(matchingDays, id: \.self) { day in
+                    SearchDayRow(
+                        day: day,
+                        query: query,
+                        episodes: episodes,
+                        journals: journals,
+                        momentNotes: momentNotes
+                    )
+                }
+            }
+        }
+    }
+
+    private func matches(_ episode: TimelineEpisode) -> Bool {
+        contains(episode.title) || (episode.subtitle.map(contains) ?? false)
+    }
+
+    private func contains(_ value: String) -> Bool {
+        value.localizedCaseInsensitiveContains(query)
+    }
+}
+
+private struct SearchDayRow: View {
+    let day: CalendarDay
+    let query: String
+    let episodes: [TimelineEpisode]
+    let journals: [JournalEntry]
+    let momentNotes: [MomentNote]
+
+    private var displayDate: Date? {
+        day.date(in: .current)
+    }
+
+    private var matchingEpisodes: [TimelineEpisode] {
+        episodes
+            .filter {
+                TimelineDayProjection.episode($0, intersects: day)
+                    && ($0.title.localizedCaseInsensitiveContains(query)
+                        || ($0.subtitle?.localizedCaseInsensitiveContains(query) ?? false))
+            }
+            .sorted { $0.startDate < $1.startDate }
+    }
+
+    private var matchingJournal: JournalEntry? {
+        journals.first {
+            TimelineDayProjection.journal($0, belongsTo: day)
+                && $0.body.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var matchingNotes: [MomentNote] {
+        momentNotes
+            .filter { note in
+                guard note.body.localizedCaseInsensitiveContains(query) else { return false }
+                let zone = TimelineDayProjection.timeZone(identifier: note.timeZoneIdentifier)
+                return CalendarDay(containing: note.timestamp, timeZone: zone) == day
+            }
+            .sorted { $0.timestamp < $1.timestamp }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let displayDate {
+                Text(displayDate.formatted(.dateTime.year().month().day().weekday(.short).locale(Locale(identifier: "ja_JP"))))
+                    .font(.subheadline.weight(.semibold))
+            }
+
+            if !matchingEpisodes.isEmpty {
+                Text(matchingEpisodes.map(\.title).joined(separator: " → "))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            if let matchingJournal {
+                Text(matchingJournal.body)
+                    .font(.body)
+                    .lineLimit(3)
+            }
+
+            ForEach(matchingNotes.prefix(2), id: \.id) { note in
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Image(systemName: "note.text")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(note.body)
+                        .font(.subheadline)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 3)
     }
 }
