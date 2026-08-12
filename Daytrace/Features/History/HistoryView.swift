@@ -106,7 +106,12 @@ private struct MonthGrid: View {
             LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(Array(days.enumerated()), id: \.offset) { _, date in
                     if let date {
-                        DayCell(date: date, hasMemory: hasMemory(on: date), hasJournal: hasJournal(on: date))
+                        let day = CalendarDay(containing: date, timeZone: .current)
+                        DayCell(
+                            date: date,
+                            hasMemory: hasMemory(on: day),
+                            hasJournal: hasJournal(on: day)
+                        )
                     } else {
                         Color.clear.frame(height: 42)
                     }
@@ -115,14 +120,12 @@ private struct MonthGrid: View {
         }
     }
 
-    private func hasMemory(on date: Date) -> Bool {
-        let interval = DayInterval(containing: date, timeZone: .current)
-        return episodes.contains { interval.intersects(start: $0.startDate, end: $0.endDate) }
+    private func hasMemory(on day: CalendarDay) -> Bool {
+        episodes.contains { TimelineDayProjection.episode($0, intersects: day) }
     }
 
-    private func hasJournal(on date: Date) -> Bool {
-        let interval = DayInterval(containing: date, timeZone: .current)
-        return journals.contains { $0.dayAnchor >= interval.start && $0.dayAnchor < interval.end }
+    private func hasJournal(on day: CalendarDay) -> Bool {
+        journals.contains { TimelineDayProjection.journal($0, belongsTo: day) }
     }
 }
 
@@ -154,16 +157,15 @@ private struct RecentDaysList: View {
     let episodes: [TimelineEpisode]
     let journals: [JournalEntry]
 
-    private var recentAnchors: [Date] {
-        let calendar = Calendar.current
-        var anchors = Set<Date>()
+    private var recentDays: [CalendarDay] {
+        var days = Set<CalendarDay>()
         for episode in episodes.prefix(120) {
-            anchors.insert(calendar.startOfDay(for: episode.startDate))
+            days.formUnion(TimelineDayProjection.coveredDays(by: episode, limit: 14))
         }
         for journal in journals.prefix(60) {
-            anchors.insert(calendar.startOfDay(for: journal.dayAnchor))
+            days.insert(TimelineDayProjection.day(for: journal))
         }
-        return anchors.sorted(by: >).prefix(14).map { $0 }
+        return Array(days.sorted(by: >).prefix(14))
     }
 
     var body: some View {
@@ -171,7 +173,7 @@ private struct RecentDaysList: View {
             Text("最近")
                 .font(.headline)
 
-            ForEach(recentAnchors, id: \.self) { day in
+            ForEach(recentDays, id: \.self) { day in
                 RecentDayRow(day: day, episodes: episodes, journals: journals)
             }
         }
@@ -179,26 +181,33 @@ private struct RecentDaysList: View {
 }
 
 private struct RecentDayRow: View {
-    let day: Date
+    let day: CalendarDay
     let episodes: [TimelineEpisode]
     let journals: [JournalEntry]
 
-    private var interval: DayInterval { DayInterval(containing: day, timeZone: .current) }
-
     private var stays: [TimelineEpisode] {
         episodes
-            .filter { $0.kind == .stay && interval.intersects(start: $0.startDate, end: $0.endDate) }
+            .filter {
+                $0.kind == .stay
+                    && TimelineDayProjection.episode($0, intersects: day)
+            }
             .sorted { $0.startDate < $1.startDate }
     }
 
     private var journal: JournalEntry? {
-        journals.first { $0.dayAnchor >= interval.start && $0.dayAnchor < interval.end }
+        journals.first { TimelineDayProjection.journal($0, belongsTo: day) }
+    }
+
+    private var displayDate: Date? {
+        day.date(in: .current)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(day.formatted(.dateTime.month().day().weekday(.short).locale(Locale(identifier: "ja_JP"))))
-                .font(.subheadline.weight(.semibold))
+            if let displayDate {
+                Text(displayDate.formatted(.dateTime.month().day().weekday(.short).locale(Locale(identifier: "ja_JP"))))
+                    .font(.subheadline.weight(.semibold))
+            }
 
             if !stays.isEmpty {
                 Text(stays.map(\.title).joined(separator: " → "))
