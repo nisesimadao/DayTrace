@@ -20,6 +20,8 @@
     <string>1</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSFaceIDUsageDescription</key>
+    <string>DayTraceの位置履歴と日記を保護するためにFace IDを使用します。</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
     <string>アプリを閉じている間も訪れた場所を記録し、あとで一日を振り返れるようにします。</string>
     <key>NSLocationWhenInUseUsageDescription</key>
