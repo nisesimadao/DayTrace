@@ -128,15 +128,6 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         refreshHealth()
     }
 
-    func deleteRawLocationEvidence() throws {
-        guard let context = modelContext else { return }
-        try context.delete(model: LocationEvidence.self)
-        try context.delete(model: VisitEvidence.self)
-        try context.save()
-        lastEvidenceAt = nil
-        refreshHealth()
-    }
-
     func deleteLocationHistoryKeepingJournal() throws {
         guard let context = modelContext else { return }
         try context.delete(model: LocationEvidence.self)
