@@ -1,0 +1,23 @@
+<svg width="1600" height="520" viewBox="0 0 1600 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="120" y1="30" x2="1450" y2="520" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7FBFF"/>
+      <stop offset="1" stop-color="#EEF8F7"/>
+    </linearGradient>
+    <linearGradient id="g" x1="184" y1="116" x2="494" y2="408" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#20C7C7"/>
+      <stop offset="0.52" stop-color="#2287F4"/>
+      <stop offset="1" stop-color="#4B55E8"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="520" rx="44" fill="url(#bg)"/>
+  <path d="M151 112H247C353 112 429 171 429 260C429 349 353 408 247 408H151" stroke="url(#g)" stroke-width="45" stroke-linecap="round"/>
+  <path d="M151 334C201 334 206 244 264 244C324 244 316 186 375 186" stroke="url(#g)" stroke-width="22" stroke-linecap="round"/>
+  <circle cx="151" cy="334" r="17" fill="white" stroke="#20C7C7" stroke-width="11"/>
+  <circle cx="264" cy="244" r="17" fill="white" stroke="#2287F4" stroke-width="11"/>
+  <circle cx="375" cy="186" r="17" fill="white" stroke="#4B55E8" stroke-width="11"/>
+  <text x="535" y="244" fill="#102B50" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="112" font-weight="700">DayTrace</text>
+  <text x="542" y="318" fill="#60758E" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="36" font-weight="500">Remember your day.</text>
+  <path d="M542 367H1318" stroke="#D8E7F2" stroke-width="2"/>
+  <text x="542" y="413" fill="#60758E" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="25">Passive location history  ·  Human-correctable timeline  ·  Diary-first</text>
+</svg>
