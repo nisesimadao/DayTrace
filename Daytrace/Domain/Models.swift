@@ -355,14 +355,16 @@ struct TimelineEditingService {
             episode.endDate = endDate
         }
 
-        if confirmLocation, episode.confidence != .high {
+        let canConfirmLocation = confirmLocation
+            && !safeTitle.isEmpty
+            && safeTitle != "未設定の場所"
+
+        if canConfirmLocation, episode.confidence != .high {
             deactivateAssertions(for: episode.id, type: .confirm, in: context)
             context.insert(UserAssertion(episodeID: episode.id, type: .confirm))
             episode.confidence = .high
             episode.subtitle = nil
-            if !safeTitle.isEmpty, safeTitle != "未設定の場所" {
-                learnConfirmedPlace(for: episode, name: safeTitle, in: context)
-            }
+            learnConfirmedPlace(for: episode, name: safeTitle, in: context)
         }
 
         try context.save()
