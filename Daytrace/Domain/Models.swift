@@ -46,7 +46,7 @@ final class VisitEvidence {
     @Attribute(.unique) var id: UUID
     var arrivalDate: Date?
     var departureDate: Date?
-    var observedAt: Date = .distantPast
+    var observedAt: Date = Date.distantPast
     var latitude: Double
     var longitude: Double
     var horizontalAccuracy: Double
