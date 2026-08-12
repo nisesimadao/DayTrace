@@ -106,20 +106,34 @@ struct JournalEditingService {
         now: Date = .now
     ) throws -> JournalEntry? {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetDay = CalendarDay(containing: day.start, timeZone: day.timeZone)
+        let allJournals = try context.fetch(FetchDescriptor<JournalEntry>())
+        let matchingJournals = allJournals
+            .filter { TimelineDayProjection.day(for: $0) == targetDay }
+            .sorted { $0.createdAt < $1.createdAt }
+
+        let preferredJournal = existingJournal.flatMap { existing in
+            matchingJournals.first { $0.id == existing.id }
+        } ?? matchingJournals.first
 
         guard !trimmed.isEmpty else {
-            if let existingJournal {
-                context.delete(existingJournal)
+            for journal in matchingJournals {
+                context.delete(journal)
+            }
+            if !matchingJournals.isEmpty {
                 try context.save()
             }
             return nil
         }
 
-        if let existingJournal {
-            existingJournal.body = trimmed
-            existingJournal.updatedAt = now
+        if let journal = preferredJournal {
+            journal.body = trimmed
+            journal.updatedAt = now
+            for duplicate in matchingJournals where duplicate.id != journal.id {
+                context.delete(duplicate)
+            }
             try context.save()
-            return existingJournal
+            return journal
         }
 
         let journal = JournalEntry(
@@ -151,7 +165,7 @@ private struct JournalingSuggestionsBridge: ViewModifier {
     func body(content: Content) -> some View {
 #if canImport(JournalingSuggestions)
         content
-            .journalingSuggestionsPicker(isPresented: $isPresented) { suggestion in
+            .journalingSuggestionsPicker(isPresented: $isSuggestionPickerPresented) { suggestion in
                 await MainActor.run {
                     onSelection(suggestion.title, suggestion.date?.start)
                 }
