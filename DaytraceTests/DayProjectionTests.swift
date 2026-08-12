@@ -212,6 +212,40 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testUnnamedPlaceCannotBeConfirmed() throws {
+        let context = try makeContext()
+        let stay = TimelineEpisode(
+            kind: .stay,
+            startDate: baseTime,
+            endDate: baseTime.addingTimeInterval(60 * 60),
+            title: "未設定の場所",
+            subtitle: "場所を確認",
+            latitude: 34.66,
+            longitude: 133.92,
+            confidence: .low,
+            sourceVersion: 5,
+            timeZoneIdentifier: zone
+        )
+        context.insert(stay)
+        try context.save()
+
+        try TimelineEditingService().saveStay(
+            stay,
+            title: "",
+            startDate: stay.startDate,
+            endDate: stay.endDate,
+            confirmLocation: true,
+            in: context
+        )
+
+        XCTAssertEqual(stay.confidence, .low)
+        XCTAssertEqual(stay.subtitle, "場所を確認")
+        XCTAssertNil(stay.placeID)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<PlaceRecord>()).isEmpty)
+        XCTAssertFalse(try context.fetch(FetchDescriptor<UserAssertion>()).contains { $0.type == .confirm && $0.isActive })
+    }
+
+    @MainActor
     func testRenamingResolvedStayDoesNotRenameExistingPlace() throws {
         let context = try makeContext()
         let originalPlace = PlaceRecord(
