@@ -4,7 +4,7 @@ import SwiftData
 
 @MainActor
 @Observable
-final class LocationRecorder: NSObject, CLLocationManagerDelegate {
+final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegate {
     static let shared = LocationRecorder()
 
     enum Health: Equatable {
