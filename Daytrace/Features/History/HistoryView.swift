@@ -54,6 +54,9 @@ struct HistoryView: View {
             placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: "場所・日記・メモを検索"
         )
+        .navigationDestination(for: CalendarDay.self) { day in
+            HistoricalDayDetailView(day: day)
+        }
     }
 }
 
@@ -92,6 +95,10 @@ private struct MonthGrid: View {
     let journals: [JournalEntry]
     let columns: [GridItem]
 
+    private var today: CalendarDay {
+        CalendarDay(containing: .now, timeZone: .current)
+    }
+
     private var days: [Date?] {
         var calendar = Calendar.current
         calendar.firstWeekday = 2
@@ -121,11 +128,18 @@ private struct MonthGrid: View {
                 ForEach(Array(days.enumerated()), id: \.offset) { _, date in
                     if let date {
                         let day = CalendarDay(containing: date, timeZone: .current)
-                        DayCell(
+                        let cell = DayCell(
                             date: date,
                             hasMemory: hasMemory(on: day),
                             hasJournal: hasJournal(on: day)
                         )
+
+                        if day <= today {
+                            NavigationLink(value: day) { cell }
+                                .buttonStyle(.plain)
+                        } else {
+                            cell.opacity(0.35)
+                        }
                     } else {
                         Color.clear.frame(height: 42)
                     }
@@ -188,7 +202,10 @@ private struct RecentDaysList: View {
                 .font(.headline)
 
             ForEach(recentDays, id: \.self) { day in
-                RecentDayRow(day: day, episodes: episodes, journals: journals)
+                NavigationLink(value: day) {
+                    RecentDayRow(day: day, episodes: episodes, journals: journals)
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -238,6 +255,7 @@ private struct RecentDayRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
 }
 
@@ -313,7 +331,10 @@ private struct HistorySearchResults: View {
                     .padding(.top, 12)
 
                 ForEach(results) { result in
-                    SearchDayRow(result: result)
+                    NavigationLink(value: result.day) {
+                        SearchDayRow(result: result)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -368,5 +389,221 @@ private struct SearchDayRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 3)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct HistoricalDayDetailView: View {
+    let day: CalendarDay
+
+    @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
+    @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
+    @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
+    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
+
+    @State private var selectedEpisodeID: UUID?
+
+    private var suppressedEpisodeIDs: Set<UUID> {
+        TimelineVisibility.suppressedEpisodeIDs(from: assertions)
+    }
+
+    private var dayEpisodes: [TimelineEpisode] {
+        episodes
+            .filter {
+                !suppressedEpisodeIDs.contains($0.id)
+                    && TimelineDayProjection.episode($0, intersects: day)
+            }
+            .sorted { $0.startDate < $1.startDate }
+    }
+
+    private var journal: JournalEntry? {
+        journals.first { TimelineDayProjection.journal($0, belongsTo: day) }
+    }
+
+    private var dayNotes: [MomentNote] {
+        momentNotes.filter { note in
+            let zone = TimelineDayProjection.timeZone(identifier: note.timeZoneIdentifier)
+            return CalendarDay(containing: note.timestamp, timeZone: zone) == day
+        }
+    }
+
+    private var timeZone: TimeZone {
+        if let journal {
+            return TimelineDayProjection.timeZone(identifier: journal.timeZoneIdentifier)
+        }
+        if let stay = dayEpisodes.first(where: { $0.kind == .stay }) {
+            return TimelineDayProjection.timeZone(identifier: stay.timeZoneIdentifier)
+        }
+        if let episode = dayEpisodes.first {
+            return TimelineDayProjection.timeZone(identifier: episode.timeZoneIdentifier)
+        }
+        return .current
+    }
+
+    private var interval: DayInterval {
+        DayInterval(containing: day.date(in: timeZone) ?? .now, timeZone: timeZone)
+    }
+
+    private var displayDate: Date? {
+        day.date(in: .current)
+    }
+
+    private var hasLocatableStay: Bool {
+        dayEpisodes.contains { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: DS.sectionSpacing) {
+                if let displayDate {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(displayDate.formatted(.dateTime.weekday(.wide).locale(Locale(identifier: "ja_JP"))))
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Text(displayDate.formatted(.dateTime.year().month(.wide).day().locale(Locale(identifier: "ja_JP"))))
+                            .font(.system(size: 31, weight: .bold, design: .rounded))
+                            .tracking(-0.6)
+                    }
+                    .padding(.top, 8)
+                }
+
+                if hasLocatableStay {
+                    DayMap(
+                        episodes: dayEpisodes,
+                        selectedEpisodeID: $selectedEpisodeID
+                    )
+                }
+
+                if dayEpisodes.isEmpty {
+                    ContentUnavailableView {
+                        Label("位置の記録はありません", systemImage: "location.slash")
+                    } description: {
+                        Text("この日も日記を残せます。")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+                } else {
+                    DayTimeline(
+                        episodes: dayEpisodes,
+                        selectedEpisodeID: $selectedEpisodeID,
+                        lastEvidenceAt: nil,
+                        allowsEditing: false,
+                        onEdit: { _ in },
+                        onSuppress: { _ in }
+                    )
+                }
+
+                HistoricalJournalEditor(
+                    day: interval,
+                    existingJournal: journal,
+                    notes: dayNotes
+                )
+            }
+            .padding(.horizontal, DS.horizontalPadding)
+            .padding(.bottom, 40)
+        }
+        .navigationTitle("この日")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct HistoricalJournalEditor: View {
+    let day: DayInterval
+    let existingJournal: JournalEntry?
+    let notes: [MomentNote]
+
+    @Environment(\.modelContext) private var modelContext
+    @State private var bodyText = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Divider()
+                .padding(.bottom, 8)
+
+            Text("この日を残す")
+                .font(.title2.bold())
+
+            if !notes.isEmpty {
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("この日のメモ")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(notes) { note in
+                        HistoricalMomentNoteRow(note: note) {
+                            modelContext.delete(note)
+                            try? modelContext.save()
+                        }
+                    }
+                }
+            }
+
+            TextEditor(text: $bodyText)
+                .focused($isFocused)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 130)
+                .padding(12)
+                .background(
+                    Color(.secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
+                )
+                .overlay(alignment: .topLeading) {
+                    if bodyText.isEmpty {
+                        Text("この日はどんな日だった？")
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 17)
+                            .padding(.vertical, 20)
+                            .allowsHitTesting(false)
+                    }
+                }
+
+            HStack {
+                Spacer()
+                if existingJournal != nil || !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button("保存", action: save)
+                        .fontWeight(.semibold)
+                        .buttonStyle(.daytraceGlassProminent)
+                }
+            }
+        }
+        .onAppear {
+            bodyText = existingJournal?.body ?? ""
+        }
+    }
+
+    private func save() {
+        try? JournalEditingService().save(
+            day: day,
+            body: bodyText,
+            existingJournal: existingJournal,
+            in: modelContext
+        )
+        isFocused = false
+    }
+}
+
+private struct HistoricalMomentNoteRow: View {
+    let note: MomentNote
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Text(TimelineFormatting.clock(note.timestamp, timeZoneIdentifier: note.timeZoneIdentifier))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 42, alignment: .trailing)
+
+            Text(note.body)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("削除", systemImage: "trash", role: .destructive, action: onDelete)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "削除", onDelete)
     }
 }
