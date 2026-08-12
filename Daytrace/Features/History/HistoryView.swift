@@ -241,39 +241,65 @@ private struct RecentDayRow: View {
     }
 }
 
+private struct HistorySearchResult: Identifiable {
+    let day: CalendarDay
+    let episodes: [TimelineEpisode]
+    let journal: JournalEntry?
+    let notes: [MomentNote]
+
+    var id: CalendarDay { day }
+}
+
 private struct HistorySearchResults: View {
     let query: String
     let episodes: [TimelineEpisode]
     let journals: [JournalEntry]
     let momentNotes: [MomentNote]
 
-    private var matchingDays: [CalendarDay] {
-        var days = Set<CalendarDay>()
+    private var results: [HistorySearchResult] {
+        var episodesByDay: [CalendarDay: [TimelineEpisode]] = [:]
+        var journalByDay: [CalendarDay: JournalEntry] = [:]
+        var notesByDay: [CalendarDay: [MomentNote]] = [:]
+        var allDays = Set<CalendarDay>()
 
         for episode in episodes where matches(episode) {
-            days.formUnion(
-                TimelineDayProjection.coveredDays(
-                    by: episode,
-                    limit: 10_000
-                )
-            )
+            for day in TimelineDayProjection.coveredDays(by: episode, limit: 10_000) {
+                episodesByDay[day, default: []].append(episode)
+                allDays.insert(day)
+            }
         }
 
         for journal in journals where contains(journal.body) {
-            days.insert(TimelineDayProjection.day(for: journal))
+            let day = TimelineDayProjection.day(for: journal)
+            if journalByDay[day] == nil {
+                journalByDay[day] = journal
+            }
+            allDays.insert(day)
         }
 
         for note in momentNotes where contains(note.body) {
             let zone = TimelineDayProjection.timeZone(identifier: note.timeZoneIdentifier)
-            days.insert(CalendarDay(containing: note.timestamp, timeZone: zone))
+            let day = CalendarDay(containing: note.timestamp, timeZone: zone)
+            notesByDay[day, default: []].append(note)
+            allDays.insert(day)
         }
 
-        return Array(days.sorted(by: >).prefix(80))
+        return allDays
+            .sorted(by: >)
+            .prefix(80)
+            .map { day in
+                HistorySearchResult(
+                    day: day,
+                    episodes: (episodesByDay[day] ?? []).sorted { $0.startDate < $1.startDate },
+                    journal: journalByDay[day],
+                    notes: (notesByDay[day] ?? []).sorted { $0.timestamp < $1.timestamp }
+                )
+            }
     }
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 18) {
-            if matchingDays.isEmpty {
+            if results.isEmpty {
                 ContentUnavailableView {
                     Label("見つかりませんでした", systemImage: "magnifyingglass")
                 } description: {
@@ -282,25 +308,19 @@ private struct HistorySearchResults: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 70)
             } else {
-                Text("\(matchingDays.count)日の記録")
+                Text("\(results.count)日の記録")
                     .font(.headline)
                     .padding(.top, 12)
 
-                ForEach(matchingDays, id: \.self) { day in
-                    SearchDayRow(
-                        day: day,
-                        query: query,
-                        episodes: episodes,
-                        journals: journals,
-                        momentNotes: momentNotes
-                    )
+                ForEach(results) { result in
+                    SearchDayRow(result: result)
                 }
             }
         }
     }
 
     private func matches(_ episode: TimelineEpisode) -> Bool {
-        contains(episode.title) || (episode.subtitle.map(contains) ?? false)
+        contains(episode.title) || (episode.subtitle.map { contains($0) } ?? false)
     }
 
     private func contains(_ value: String) -> Bool {
@@ -309,41 +329,10 @@ private struct HistorySearchResults: View {
 }
 
 private struct SearchDayRow: View {
-    let day: CalendarDay
-    let query: String
-    let episodes: [TimelineEpisode]
-    let journals: [JournalEntry]
-    let momentNotes: [MomentNote]
+    let result: HistorySearchResult
 
     private var displayDate: Date? {
-        day.date(in: .current)
-    }
-
-    private var matchingEpisodes: [TimelineEpisode] {
-        episodes
-            .filter {
-                TimelineDayProjection.episode($0, intersects: day)
-                    && ($0.title.localizedCaseInsensitiveContains(query)
-                        || ($0.subtitle?.localizedCaseInsensitiveContains(query) ?? false))
-            }
-            .sorted { $0.startDate < $1.startDate }
-    }
-
-    private var matchingJournal: JournalEntry? {
-        journals.first {
-            TimelineDayProjection.journal($0, belongsTo: day)
-                && $0.body.localizedCaseInsensitiveContains(query)
-        }
-    }
-
-    private var matchingNotes: [MomentNote] {
-        momentNotes
-            .filter { note in
-                guard note.body.localizedCaseInsensitiveContains(query) else { return false }
-                let zone = TimelineDayProjection.timeZone(identifier: note.timeZoneIdentifier)
-                return CalendarDay(containing: note.timestamp, timeZone: zone) == day
-            }
-            .sorted { $0.timestamp < $1.timestamp }
+        result.day.date(in: .current)
     }
 
     var body: some View {
@@ -353,20 +342,20 @@ private struct SearchDayRow: View {
                     .font(.subheadline.weight(.semibold))
             }
 
-            if !matchingEpisodes.isEmpty {
-                Text(matchingEpisodes.map(\.title).joined(separator: " → "))
+            if !result.episodes.isEmpty {
+                Text(result.episodes.map(\.title).joined(separator: " → "))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
 
-            if let matchingJournal {
-                Text(matchingJournal.body)
+            if let journal = result.journal {
+                Text(journal.body)
                     .font(.body)
                     .lineLimit(3)
             }
 
-            ForEach(matchingNotes.prefix(2), id: \.id) { note in
+            ForEach(result.notes.prefix(2), id: \.id) { note in
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Image(systemName: "note.text")
                         .font(.caption)
