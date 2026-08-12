@@ -71,18 +71,12 @@ struct JournalComposer: View {
     }
 
     private func save() {
-        let trimmed = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let existingJournal {
-            existingJournal.body = trimmed
-            existingJournal.updatedAt = .now
-        } else if !trimmed.isEmpty {
-            modelContext.insert(JournalEntry(
-                dayAnchor: day.start,
-                body: trimmed,
-                timeZoneIdentifier: day.timeZone.identifier
-            ))
-        }
-        try? modelContext.save()
+        try? JournalEditingService().save(
+            day: day,
+            body: bodyText,
+            existingJournal: existingJournal,
+            in: modelContext
+        )
         isFocused = false
     }
 
@@ -98,6 +92,46 @@ struct JournalComposer: View {
         let prefix = bodyText.isEmpty ? "" : "\n"
         bodyText += "\(prefix)\(title)\(rangeText)\n"
         isFocused = true
+    }
+}
+
+@MainActor
+struct JournalEditingService {
+    @discardableResult
+    func save(
+        day: DayInterval,
+        body: String,
+        existingJournal: JournalEntry?,
+        in context: ModelContext,
+        now: Date = .now
+    ) throws -> JournalEntry? {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmed.isEmpty else {
+            if let existingJournal {
+                context.delete(existingJournal)
+                try context.save()
+            }
+            return nil
+        }
+
+        if let existingJournal {
+            existingJournal.body = trimmed
+            existingJournal.updatedAt = now
+            try context.save()
+            return existingJournal
+        }
+
+        let journal = JournalEntry(
+            dayAnchor: day.start,
+            body: trimmed,
+            createdAt: now,
+            updatedAt: now,
+            timeZoneIdentifier: day.timeZone.identifier
+        )
+        context.insert(journal)
+        try context.save()
+        return journal
     }
 }
 
