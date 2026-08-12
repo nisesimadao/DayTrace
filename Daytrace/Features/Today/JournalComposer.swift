@@ -9,9 +9,23 @@ struct JournalComposer: View {
     let existingJournal: JournalEntry?
 
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
+
     @State private var bodyText = ""
     @State private var isSuggestionPickerPresented = false
+    @State private var isMomentNotePresented = false
     @FocusState private var isFocused: Bool
+
+    private var targetDay: CalendarDay {
+        CalendarDay(containing: day.start, timeZone: day.timeZone)
+    }
+
+    private var dayNotes: [MomentNote] {
+        momentNotes.filter { note in
+            let zone = TimelineDayProjection.timeZone(identifier: note.timeZoneIdentifier)
+            return CalendarDay(containing: note.timestamp, timeZone: zone) == targetDay
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -20,6 +34,18 @@ struct JournalComposer: View {
 
             Text("今日を残す")
                 .font(.title2.bold())
+
+            if !dayNotes.isEmpty {
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("今日のメモ")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(dayNotes) { note in
+                        MomentNoteRow(note: note, onDelete: { delete(note) })
+                    }
+                }
+            }
 
             TextEditor(text: $bodyText)
                 .focused($isFocused)
@@ -52,6 +78,14 @@ struct JournalComposer: View {
                         : "この環境では振り返り候補を利用できません"
                 )
 
+                Button {
+                    isMomentNotePresented = true
+                } label: {
+                    Label("今メモ", systemImage: "note.text.badge.plus")
+                }
+                .buttonStyle(.daytraceGlass)
+                .accessibilityHint("今の時刻に短いメモを残します")
+
                 Spacer()
 
                 if existingJournal != nil || !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -63,6 +97,9 @@ struct JournalComposer: View {
         }
         .onAppear {
             bodyText = existingJournal?.body ?? ""
+        }
+        .sheet(isPresented: $isMomentNotePresented) {
+            MomentNoteComposerSheet()
         }
         .modifier(JournalingSuggestionsBridge(
             isPresented: $isSuggestionPickerPresented,
@@ -80,6 +117,11 @@ struct JournalComposer: View {
         isFocused = false
     }
 
+    private func delete(_ note: MomentNote) {
+        modelContext.delete(note)
+        try? modelContext.save()
+    }
+
     @MainActor
     private func appendSuggestion(title: String, date: Date?) {
         let rangeText: String
@@ -92,6 +134,100 @@ struct JournalComposer: View {
         let prefix = bodyText.isEmpty ? "" : "\n"
         bodyText += "\(prefix)\(title)\(rangeText)\n"
         isFocused = true
+    }
+}
+
+private struct MomentNoteRow: View {
+    let note: MomentNote
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Text(TimelineFormatting.clock(note.timestamp, timeZoneIdentifier: note.timeZoneIdentifier))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 42, alignment: .trailing)
+
+            Text(note.body)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("削除", systemImage: "trash", role: .destructive, action: onDelete)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "削除", onDelete)
+    }
+}
+
+private struct MomentNoteComposerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
+
+    private var trimmedText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(Date.now.formatted(.dateTime.hour().minute().locale(Locale(identifier: "ja_JP"))))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                TextEditor(text: $text)
+                    .focused($isFocused)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 120)
+                    .padding(12)
+                    .background(
+                        Color(.secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
+                    )
+                    .overlay(alignment: .topLeading) {
+                        if text.isEmpty {
+                            Text("あとで思い出したいこと")
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 17)
+                                .padding(.vertical, 20)
+                                .allowsHitTesting(false)
+                        }
+                    }
+
+                Spacer()
+            }
+            .padding(DS.horizontalPadding)
+            .navigationTitle("今をメモ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存", action: save)
+                        .fontWeight(.semibold)
+                        .disabled(trimmedText.isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .onAppear { isFocused = true }
+    }
+
+    private func save() {
+        guard !trimmedText.isEmpty else { return }
+        modelContext.insert(MomentNote(
+            timestamp: .now,
+            body: trimmedText,
+            timeZoneIdentifier: TimeZone.current.identifier
+        ))
+        try? modelContext.save()
+        dismiss()
     }
 }
 
