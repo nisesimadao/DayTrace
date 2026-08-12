@@ -4,7 +4,7 @@ import SwiftData
 
 @MainActor
 struct TimelineEngine {
-    static let sourceVersion = 3
+    static let sourceVersion = 4
 
     func rebuildRecentTimeline(in context: ModelContext, now: Date = .now) throws {
         let horizon = now.addingTimeInterval(-60 * 60 * 48)
@@ -129,14 +129,19 @@ struct TimelineEngine {
         assertions: [UserAssertion]
     ) {
         let assertionTypes = Set(assertions.map(\.type))
+        let hasLegacyRetime = assertionTypes.contains(.retime)
+        let overridesStart = hasLegacyRetime || assertionTypes.contains(.retimeStart)
+        let overridesEnd = hasLegacyRetime || assertionTypes.contains(.retimeEnd)
 
         episode.kind = .stay
         episode.sourceVisitID = visit.id
         episode.sourceVersion = Self.sourceVersion
         episode.timeZoneIdentifier = visit.timeZoneIdentifier
 
-        if !assertionTypes.contains(.retime) {
+        if !overridesStart {
             episode.startDate = arrival
+        }
+        if !overridesEnd {
             episode.endDate = visit.departureDate
         }
 
@@ -159,6 +164,10 @@ struct TimelineEngine {
                 if let title = assertion.replacementTitle { episode.title = title }
             case .retime:
                 if let start = assertion.replacementStart { episode.startDate = start }
+                episode.endDate = assertion.replacementEnd
+            case .retimeStart:
+                if let start = assertion.replacementStart { episode.startDate = start }
+            case .retimeEnd:
                 episode.endDate = assertion.replacementEnd
             case .reposition:
                 if let latitude = assertion.replacementLatitude { episode.latitude = latitude }
