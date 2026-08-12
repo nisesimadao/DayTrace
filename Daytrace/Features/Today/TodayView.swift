@@ -232,7 +232,7 @@ private struct StayEditorSheet: View {
     @State private var startDate: Date
     @State private var endDate: Date
     @State private var isOngoing: Bool
-    @State private var confirmLocation: Bool
+    @State private var shouldConfirmLocation = false
 
     init(episode: TimelineEpisode) {
         self.episode = episode
@@ -240,7 +240,6 @@ private struct StayEditorSheet: View {
         _startDate = State(initialValue: episode.startDate)
         _endDate = State(initialValue: episode.endDate ?? .now)
         _isOngoing = State(initialValue: episode.endDate == nil)
-        _confirmLocation = State(initialValue: episode.confidence == .high)
     }
 
     var body: some View {
@@ -250,7 +249,13 @@ private struct StayEditorSheet: View {
                     TextField("場所の名前", text: $title)
                         .textInputAutocapitalization(.never)
 
-                    Toggle("この場所で合っている", isOn: $confirmLocation)
+                    if episode.confidence == .high {
+                        Label("この場所は高い確度で記録されています", systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Toggle("この場所で合っている", isOn: $shouldConfirmLocation)
+                            .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
                 }
 
                 Section {
@@ -292,7 +297,7 @@ private struct StayEditorSheet: View {
             title: title,
             startDate: startDate,
             endDate: isOngoing ? nil : endDate,
-            confirmLocation: confirmLocation,
+            confirmLocation: shouldConfirmLocation,
             in: modelContext
         )
         dismiss()
