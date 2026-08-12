@@ -1,4 +1,5 @@
 import CoreLocation
+import Foundation
 import Observation
 import SwiftData
 
@@ -39,6 +40,11 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
 
     func attach(context: ModelContext) {
         modelContext = context
+        try? RawEvidenceRetentionService().prune(
+            in: context,
+            retentionDays: retentionDaysFromDefaults
+        )
+        lastEvidenceAt = nil
         restoreLastEvidenceDateIfNeeded()
     }
 
@@ -93,6 +99,19 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         UserDefaults.standard.set(enabled, forKey: "detailedRoutesEnabled")
         guard isRecording else { return }
         enabled ? startDetailedUpdates() : stopDetailedUpdates()
+    }
+
+    func applyRetentionPolicy(days: Int) {
+        UserDefaults.standard.set(days, forKey: "rawEvidenceRetentionDays")
+        guard let context = modelContext else { return }
+
+        try? RawEvidenceRetentionService().prune(
+            in: context,
+            retentionDays: days
+        )
+        lastEvidenceAt = nil
+        restoreLastEvidenceDateIfNeeded()
+        refreshHealth()
     }
 
     func requestForegroundSnapshot() {
@@ -182,6 +201,16 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
 
     private var isAuthorized: Bool {
         authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse
+    }
+
+    private var retentionDaysFromDefaults: Int {
+        let defaults = UserDefaults.standard
+        let key = "rawEvidenceRetentionDays"
+        guard defaults.object(forKey: key) != nil else {
+            defaults.set(90, forKey: key)
+            return 90
+        }
+        return defaults.integer(forKey: key)
     }
 
     private func startDetailedUpdates() {
@@ -317,5 +346,32 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         @unknown default:
             health = .notConfigured
         }
+    }
+}
+
+@MainActor
+struct RawEvidenceRetentionService {
+    func prune(
+        in context: ModelContext,
+        retentionDays: Int,
+        now: Date = .now
+    ) throws {
+        guard retentionDays > 0 else { return }
+
+        let cutoff = Calendar.current.date(
+            byAdding: .day,
+            value: -retentionDays,
+            to: now
+        ) ?? now.addingTimeInterval(-Double(retentionDays) * 86_400)
+
+        try context.delete(
+            model: LocationEvidence.self,
+            where: #Predicate { $0.timestamp < cutoff }
+        )
+        try context.delete(
+            model: VisitEvidence.self,
+            where: #Predicate { $0.observedAt < cutoff }
+        )
+        try context.save()
     }
 }
