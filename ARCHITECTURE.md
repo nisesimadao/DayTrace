@@ -58,13 +58,14 @@ The current MVP is local-only. A future CloudKit configuration can be added to t
 
 ## Location recorder
 
-Current first pass combines:
+Current first pass uses:
 
-- Visit monitoring
-- Significant-change monitoring
-- Standard location updates with 100m distance filtering and automatic pause
+- Visit monitoring as the durable stay signal
+- Significant-change monitoring as the passive movement signal
+- A one-shot foreground snapshot when the app is opened
+- Continuous standard location updates only when **Detailed routes** is explicitly enabled
 
-The next pass should make standard updates adaptive: sleep while stationary, increase sampling around departure/arrival, then sleep again. Continuous high-accuracy GPS is intentionally not the default.
+The next pass should make detailed updates adaptive: wake around likely departure/arrival, sample only while useful, then sleep again. Continuous high-accuracy GPS is intentionally not the default.
 
 ## Reprocessing invariant
 
@@ -72,7 +73,7 @@ The next pass should make standard updates adaptive: sleep while stationary, inc
 
 ## Journaling Suggestions
 
-The app only receives suggestion details after a person explicitly chooses a suggestion in the system picker. The picker is a memory cue, not a background data source.
+The app only receives suggestion details after a person explicitly chooses a suggestion in the system picker. The picker is a memory cue, not a background data source. The UI gates the integration with `canImport(JournalingSuggestions)` so builds on environments that don't ship the module keep the core journal usable.
 
 ## Planned milestones
 
