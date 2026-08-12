@@ -387,10 +387,15 @@ struct RawEvidenceRetentionService {
             model: LocationEvidence.self,
             where: #Predicate { $0.timestamp < cutoff }
         )
-        try context.delete(
-            model: VisitEvidence.self,
-            where: #Predicate { $0.observedAt < cutoff }
-        )
+
+        let visits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        for visit in visits {
+            let evidenceDate = visit.departureDate ?? visit.arrivalDate ?? visit.observedAt
+            if evidenceDate < cutoff {
+                context.delete(visit)
+            }
+        }
+
         try context.save()
     }
 }
