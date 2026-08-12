@@ -151,18 +151,23 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
 
     func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
         guard let context = modelContext else { return }
-        let departure: Date? = visit.departureDate == .distantFuture ? nil : visit.departureDate
 
-        context.insert(VisitEvidence(
-            arrivalDate: visit.arrivalDate,
-            departureDate: departure,
+        let arrival: Date? = visit.arrivalDate == .distantPast ? nil : visit.arrivalDate
+        let departure: Date? = visit.departureDate == .distantFuture ? nil : visit.departureDate
+        let observedAt = Date.now
+
+        upsertVisit(
+            arrival: arrival,
+            departure: departure,
+            observedAt: observedAt,
             latitude: visit.coordinate.latitude,
             longitude: visit.coordinate.longitude,
             horizontalAccuracy: visit.horizontalAccuracy,
-            timeZoneIdentifier: TimeZone.current.identifier
-        ))
+            in: context
+        )
 
-        lastEvidenceAt = max(lastEvidenceAt ?? .distantPast, departure ?? visit.arrivalDate)
+        let freshestDate = departure ?? arrival ?? observedAt
+        lastEvidenceAt = max(lastEvidenceAt ?? .distantPast, freshestDate)
         try? context.save()
         try? TimelineEngine().rebuildRecentTimeline(in: context)
         refreshHealth()
@@ -205,11 +210,96 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
 
     private func restoreLastEvidenceDateIfNeeded() {
         guard lastEvidenceAt == nil, let context = modelContext else { return }
-        var descriptor = FetchDescriptor<LocationEvidence>(sortBy: [SortDescriptor(\LocationEvidence.timestamp, order: .reverse)])
-        descriptor.fetchLimit = 1
-        if let latest = try? context.fetch(descriptor).first {
-            lastEvidenceAt = latest.timestamp
+
+        var locationDescriptor = FetchDescriptor<LocationEvidence>(
+            sortBy: [SortDescriptor(\LocationEvidence.timestamp, order: .reverse)]
+        )
+        locationDescriptor.fetchLimit = 1
+        let latestLocation = try? context.fetch(locationDescriptor).first?.timestamp
+
+        var visitDescriptor = FetchDescriptor<VisitEvidence>(
+            sortBy: [SortDescriptor(\VisitEvidence.observedAt, order: .reverse)]
+        )
+        visitDescriptor.fetchLimit = 1
+        let latestVisit = try? context.fetch(visitDescriptor).first
+        let latestVisitDate = latestVisit.flatMap { $0.departureDate ?? $0.arrivalDate ?? $0.observedAt }
+
+        lastEvidenceAt = [latestLocation, latestVisitDate]
+            .compactMap { $0 }
+            .max()
+    }
+
+    private func upsertVisit(
+        arrival: Date?,
+        departure: Date?,
+        observedAt: Date,
+        latitude: Double,
+        longitude: Double,
+        horizontalAccuracy: Double,
+        in context: ModelContext
+    ) {
+        var descriptor = FetchDescriptor<VisitEvidence>(
+            sortBy: [SortDescriptor(\VisitEvidence.observedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 32
+        let recentVisits = (try? context.fetch(descriptor)) ?? []
+        let coordinate = CLLocation(latitude: latitude, longitude: longitude)
+
+        let matchingVisit: VisitEvidence? = recentVisits
+            .compactMap { existing -> (VisitEvidence, Double)? in
+                let existingLocation = CLLocation(latitude: existing.latitude, longitude: existing.longitude)
+                let distance = coordinate.distance(from: existingLocation)
+
+                if let arrival, let existingArrival = existing.arrivalDate {
+                    let arrivalDelta = abs(existingArrival.timeIntervalSince(arrival))
+                    let accuracyAllowance = min(
+                        max(250, max(existing.horizontalAccuracy, horizontalAccuracy)),
+                        1_000
+                    )
+                    guard arrivalDelta <= 120, distance <= accuracyAllowance else { return nil }
+                    return (existing, arrivalDelta + distance / 100)
+                }
+
+                if arrival == nil, departure != nil, existing.departureDate == nil {
+                    let observationAge = observedAt.timeIntervalSince(existing.observedAt)
+                    guard observationAge >= 0, observationAge <= 12 * 60 * 60, distance <= 250 else {
+                        return nil
+                    }
+                    return (existing, observationAge / 60 + distance / 100)
+                }
+
+                return nil
+            }
+            .min { $0.1 < $1.1 }?
+            .0
+
+        if let matchingVisit {
+            if matchingVisit.arrivalDate == nil, let arrival {
+                matchingVisit.arrivalDate = arrival
+            }
+            if let departure {
+                matchingVisit.departureDate = departure
+            }
+            matchingVisit.observedAt = observedAt
+
+            let existingAccuracy = matchingVisit.horizontalAccuracy
+            if horizontalAccuracy >= 0 && (existingAccuracy < 0 || horizontalAccuracy < existingAccuracy) {
+                matchingVisit.latitude = latitude
+                matchingVisit.longitude = longitude
+                matchingVisit.horizontalAccuracy = horizontalAccuracy
+            }
+            return
         }
+
+        context.insert(VisitEvidence(
+            arrivalDate: arrival,
+            departureDate: departure,
+            observedAt: observedAt,
+            latitude: latitude,
+            longitude: longitude,
+            horizontalAccuracy: horizontalAccuracy,
+            timeZoneIdentifier: TimeZone.current.identifier
+        ))
     }
 
     private func refreshHealth(now: Date = .now) {
