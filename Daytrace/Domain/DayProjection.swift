@@ -14,8 +14,13 @@ struct DayInterval: Sendable {
         self.timeZone = timeZone
     }
 
-    func intersects(start episodeStart: Date, end episodeEnd: Date?) -> Bool {
-        let effectiveEnd = episodeEnd ?? .distantFuture
+    func intersects(
+        start episodeStart: Date,
+        end episodeEnd: Date?,
+        openEndedAt referenceDate: Date = .now
+    ) -> Bool {
+        let effectiveEnd = episodeEnd ?? referenceDate
+        guard effectiveEnd > episodeStart else { return false }
         return episodeStart < end && effectiveEnd > start
     }
 }
