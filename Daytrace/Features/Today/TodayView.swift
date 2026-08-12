@@ -203,13 +203,15 @@ private struct StayEditorSheet: View {
                     Toggle("この場所で合っている", isOn: $confirmLocation)
                 }
 
-                Section("時刻") {
+                Section {
                     DatePicker("到着", selection: $startDate)
                     Toggle("まだここにいる", isOn: $isOngoing)
 
                     if !isOngoing {
                         DatePicker("出発", selection: $endDate)
                     }
+                } header: {
+                    Text("時刻")
                 } footer: {
                     if !isOngoing && endDate <= startDate {
                         Text("出発時刻は到着時刻より後にしてください。")
