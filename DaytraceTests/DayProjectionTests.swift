@@ -205,6 +205,37 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testLowAccuracyVisitDoesNotAutoResolvePlace() throws {
+        let context = try makeContext()
+        let arrival = Date(timeIntervalSince1970: 1_786_500_000)
+        let place = PlaceRecord(
+            name: "学校",
+            latitude: 34.66,
+            longitude: 133.92,
+            radius: 100,
+            source: .userConfirmed
+        )
+        context.insert(place)
+        context.insert(VisitEvidence(
+            arrivalDate: arrival,
+            departureDate: arrival.addingTimeInterval(60 * 60),
+            observedAt: arrival,
+            latitude: 34.67,
+            longitude: 133.93,
+            horizontalAccuracy: 5_000,
+            timeZoneIdentifier: "Asia/Tokyo"
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: arrival.addingTimeInterval(60 * 60))
+
+        let stay = try XCTUnwrap(try context.fetch(FetchDescriptor<TimelineEpisode>()).first { $0.kind == .stay })
+        XCTAssertNil(stay.placeID)
+        XCTAssertEqual(stay.title, "未設定の場所")
+        XCTAssertEqual(stay.confidence, .low)
+    }
+
+    @MainActor
     func testTransitionWithoutSamplesBecomesGap() throws {
         let context = try makeContext()
         let start = Date(timeIntervalSince1970: 1_786_500_000)
