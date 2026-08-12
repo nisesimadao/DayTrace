@@ -278,6 +278,8 @@ enum EpisodeConfidence: String, Codable, Hashable, Sendable {
 enum UserAssertionType: String, Codable, Hashable, Sendable {
     case rename
     case retime
+    case retimeStart
+    case retimeEnd
     case reposition
     case suppress
     case mergeStay
@@ -309,15 +311,34 @@ struct TimelineEditingService {
             upsertPlace(for: episode, name: safeTitle, in: context)
         }
 
-        if startDate != episode.startDate || endDate != episode.endDate {
-            deactivateAssertions(for: episode.id, type: .retime, in: context)
+        let startChanged = startDate != episode.startDate
+        let endChanged = endDate != episode.endDate
+        if startChanged || endChanged {
+            migrateLegacyRetimeIfNeeded(
+                for: episode.id,
+                startChanged: startChanged,
+                endChanged: endChanged,
+                in: context
+            )
+        }
+
+        if startChanged {
+            deactivateAssertions(for: episode.id, type: .retimeStart, in: context)
             context.insert(UserAssertion(
                 episodeID: episode.id,
-                type: .retime,
-                replacementStart: startDate,
-                replacementEnd: endDate
+                type: .retimeStart,
+                replacementStart: startDate
             ))
             episode.startDate = startDate
+        }
+
+        if endChanged {
+            deactivateAssertions(for: episode.id, type: .retimeEnd, in: context)
+            context.insert(UserAssertion(
+                episodeID: episode.id,
+                type: .retimeEnd,
+                replacementEnd: endDate
+            ))
             episode.endDate = endDate
         }
 
@@ -331,6 +352,44 @@ struct TimelineEditingService {
         }
 
         try context.save()
+    }
+
+    private func migrateLegacyRetimeIfNeeded(
+        for episodeID: UUID,
+        startChanged: Bool,
+        endChanged: Bool,
+        in context: ModelContext
+    ) {
+        guard let assertions = try? context.fetch(FetchDescriptor<UserAssertion>()) else { return }
+        let active = assertions.filter { $0.episodeID == episodeID && $0.isActive }
+        guard let legacy = active
+            .filter({ $0.type == .retime })
+            .max(by: { $0.createdAt < $1.createdAt }) else {
+            return
+        }
+
+        let hasStartOverride = active.contains { $0.type == .retimeStart }
+        let hasEndOverride = active.contains { $0.type == .retimeEnd }
+
+        for assertion in active where assertion.type == .retime {
+            assertion.isActive = false
+        }
+
+        if !startChanged, !hasStartOverride, let start = legacy.replacementStart {
+            context.insert(UserAssertion(
+                episodeID: episodeID,
+                type: .retimeStart,
+                replacementStart: start
+            ))
+        }
+
+        if !endChanged, !hasEndOverride {
+            context.insert(UserAssertion(
+                episodeID: episodeID,
+                type: .retimeEnd,
+                replacementEnd: legacy.replacementEnd
+            ))
+        }
     }
 
     private func deactivateAssertions(
