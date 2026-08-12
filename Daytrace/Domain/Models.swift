@@ -44,8 +44,9 @@ final class LocationEvidence {
 @Model
 final class VisitEvidence {
     @Attribute(.unique) var id: UUID
-    var arrivalDate: Date
+    var arrivalDate: Date?
     var departureDate: Date?
+    var observedAt: Date
     var latitude: Double
     var longitude: Double
     var horizontalAccuracy: Double
@@ -53,8 +54,9 @@ final class VisitEvidence {
 
     init(
         id: UUID = UUID(),
-        arrivalDate: Date,
+        arrivalDate: Date?,
         departureDate: Date?,
+        observedAt: Date = .now,
         latitude: Double,
         longitude: Double,
         horizontalAccuracy: Double,
@@ -63,6 +65,7 @@ final class VisitEvidence {
         self.id = id
         self.arrivalDate = arrivalDate
         self.departureDate = departureDate
+        self.observedAt = observedAt
         self.latitude = latitude
         self.longitude = longitude
         self.horizontalAccuracy = horizontalAccuracy
@@ -116,6 +119,7 @@ final class TimelineEpisode {
     var longitude: Double?
     var confidenceRaw: String
     var placeID: UUID?
+    var sourceVisitID: UUID?
     var sourceVersion: Int
     var timeZoneIdentifier: String
 
@@ -130,6 +134,7 @@ final class TimelineEpisode {
         longitude: Double? = nil,
         confidence: EpisodeConfidence = .medium,
         placeID: UUID? = nil,
+        sourceVisitID: UUID? = nil,
         sourceVersion: Int = 1,
         timeZoneIdentifier: String
     ) {
@@ -143,6 +148,7 @@ final class TimelineEpisode {
         self.longitude = longitude
         self.confidenceRaw = confidence.rawValue
         self.placeID = placeID
+        self.sourceVisitID = sourceVisitID
         self.sourceVersion = sourceVersion
         self.timeZoneIdentifier = timeZoneIdentifier
     }
@@ -242,7 +248,7 @@ final class MomentNote {
     }
 }
 
-enum EvidenceSource: String, Codable, Sendable {
+enum EvidenceSource: String, Codable, Hashable, Sendable {
     case standardLocation
     case significantChange
     case visit
@@ -250,26 +256,26 @@ enum EvidenceSource: String, Codable, Sendable {
     case imported
 }
 
-enum PlaceSource: String, Codable, Sendable {
+enum PlaceSource: String, Codable, Hashable, Sendable {
     case userConfirmed
     case learned
     case mapSuggestion
     case coordinateOnly
 }
 
-enum EpisodeKind: String, Codable, Sendable {
+enum EpisodeKind: String, Codable, Hashable, Sendable {
     case stay
     case move
     case gap
 }
 
-enum EpisodeConfidence: String, Codable, Sendable {
+enum EpisodeConfidence: String, Codable, Hashable, Sendable {
     case high
     case medium
     case low
 }
 
-enum UserAssertionType: String, Codable, Sendable {
+enum UserAssertionType: String, Codable, Hashable, Sendable {
     case rename
     case retime
     case reposition
