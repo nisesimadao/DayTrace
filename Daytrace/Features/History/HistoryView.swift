@@ -159,7 +159,7 @@ private struct RecentDaysList: View {
 
     private var recentDays: [CalendarDay] {
         var days = Set<CalendarDay>()
-        for episode in episodes.prefix(120) {
+        for episode in episodes.prefix(120) where episode.kind == .stay {
             days.formUnion(TimelineDayProjection.coveredDays(by: episode, limit: 14))
         }
         for journal in journals.prefix(60) {
