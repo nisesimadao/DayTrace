@@ -52,7 +52,6 @@ enum ReviewReminderService {
             components.hour = hour
             components.minute = minute
             components.second = 0
-            components.timeZone = .current
 
             let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
             guard let triggerDate = trigger.nextTriggerDate(), triggerDate > now else { continue }
