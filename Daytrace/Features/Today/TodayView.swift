@@ -248,8 +248,9 @@ private struct TrackingHealthBanner: View {
     }
 }
 
-private struct StayEditorSheet: View {
+struct StayEditorSheet: View {
     let episode: TimelineEpisode
+    let rebuildHistoricalTransitions: Bool
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -266,8 +267,9 @@ private struct StayEditorSheet: View {
     @State private var placeLookupMessage: String?
     @State private var didApplyPlaceSuggestion = false
 
-    init(episode: TimelineEpisode) {
+    init(episode: TimelineEpisode, rebuildHistoricalTransitions: Bool = false) {
         self.episode = episode
+        self.rebuildHistoricalTransitions = rebuildHistoricalTransitions
         _title = State(initialValue: episode.title == "未設定の場所" ? "" : episode.title)
         _startDate = State(initialValue: episode.startDate)
         _endDate = State(initialValue: episode.endDate ?? .now)
@@ -423,6 +425,10 @@ private struct StayEditorSheet: View {
     }
 
     private func save() {
+        let originalStart = episode.startDate
+        let originalEnd = episode.endDate
+        let timeWasEdited = hasEditedTime
+
         do {
             try TimelineEditingService().saveStay(
                 episode,
@@ -437,7 +443,26 @@ private struct StayEditorSheet: View {
             return
         }
 
-        try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
+        if rebuildHistoricalTransitions {
+            if timeWasEdited {
+                var boundaryDates = [originalStart, startDate]
+                if let originalEnd { boundaryDates.append(originalEnd) }
+                if let proposedEndDate { boundaryDates.append(proposedEndDate) }
+
+                if let first = boundaryDates.min(), let last = boundaryDates.max() {
+                    let rebuildInterval = DateInterval(
+                        start: first.addingTimeInterval(-1),
+                        end: last.addingTimeInterval(1)
+                    )
+                    try? TimelineEngine().rebuildTransitions(
+                        covering: rebuildInterval,
+                        in: modelContext
+                    )
+                }
+            }
+        } else {
+            try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
+        }
         dismiss()
     }
 }

@@ -1,3 +1,4 @@
+import Foundation
 import SwiftData
 import XCTest
 @testable import Daytrace
@@ -378,6 +379,250 @@ final class RegressionTests: XCTestCase {
             timeIntervalSinceReferenceDate: UserDefaults.standard.double(forKey: "locationHistoryResetCutoff")
         )
         XCTAssertEqual(storedCutoff.timeIntervalSinceReferenceDate, resetTime.timeIntervalSinceReferenceDate, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testTargetedHistoricalRebuildUsesRetimedBoundaryAndCreatesGap() throws {
+        let context = try makeContext()
+        let oldDeparture = baseTime.addingTimeInterval(60 * 60)
+        let newDeparture = baseTime.addingTimeInterval(90 * 60)
+        let nextArrival = baseTime.addingTimeInterval(3 * 60 * 60)
+
+        let first = TimelineEpisode(
+            kind: .stay,
+            startDate: baseTime,
+            endDate: oldDeparture,
+            title: "学校",
+            confidence: .high,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        )
+        let second = TimelineEpisode(
+            kind: .stay,
+            startDate: nextArrival,
+            endDate: nextArrival.addingTimeInterval(60 * 60),
+            title: "家",
+            confidence: .high,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        )
+        let staleGap = TimelineEpisode(
+            kind: .gap,
+            startDate: oldDeparture,
+            endDate: nextArrival,
+            title: "記録のない区間",
+            confidence: .low,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        )
+        context.insert(first)
+        context.insert(second)
+        context.insert(staleGap)
+        try context.save()
+
+        try TimelineEditingService().saveStay(
+            first,
+            title: first.title,
+            startDate: first.startDate,
+            endDate: newDeparture,
+            confirmLocation: false,
+            in: context
+        )
+        try TimelineEngine().rebuildTransitions(
+            covering: DateInterval(
+                start: oldDeparture.addingTimeInterval(-1),
+                end: newDeparture.addingTimeInterval(1)
+            ),
+            in: context
+        )
+
+        let transitions = try context.fetch(FetchDescriptor<TimelineEpisode>()).filter { $0.kind != .stay }
+        XCTAssertEqual(transitions.count, 1)
+        let rebuilt = try XCTUnwrap(transitions.first)
+        XCTAssertNotEqual(rebuilt.id, staleGap.id)
+        XCTAssertEqual(rebuilt.kind, .gap)
+        XCTAssertEqual(rebuilt.startDate, newDeparture)
+        XCTAssertEqual(rebuilt.endDate, nextArrival)
+    }
+
+    @MainActor
+    func testTargetedHistoricalRebuildUsesRetainedSampleForMove() throws {
+        let context = try makeContext()
+        let departure = baseTime.addingTimeInterval(60 * 60)
+        let nextArrival = baseTime.addingTimeInterval(3 * 60 * 60)
+
+        context.insert(TimelineEpisode(
+            kind: .stay,
+            startDate: baseTime,
+            endDate: departure,
+            title: "学校",
+            confidence: .high,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        ))
+        context.insert(TimelineEpisode(
+            kind: .stay,
+            startDate: nextArrival,
+            endDate: nextArrival.addingTimeInterval(60 * 60),
+            title: "家",
+            confidence: .high,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        ))
+        context.insert(TimelineEpisode(
+            kind: .gap,
+            startDate: departure,
+            endDate: nextArrival,
+            title: "古いGap",
+            confidence: .low,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        ))
+        context.insert(LocationEvidence(
+            timestamp: departure.addingTimeInterval(20 * 60),
+            latitude: 34.67,
+            longitude: 133.93,
+            horizontalAccuracy: 20,
+            speed: 4,
+            course: 90,
+            source: .significantChange,
+            timeZoneIdentifier: tokyo
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildTransitions(
+            covering: DateInterval(start: departure, end: nextArrival),
+            in: context
+        )
+
+        let transitions = try context.fetch(FetchDescriptor<TimelineEpisode>()).filter { $0.kind != .stay }
+        XCTAssertEqual(transitions.count, 1)
+        XCTAssertEqual(transitions.first?.kind, .move)
+        XCTAssertEqual(transitions.first?.startDate, departure)
+        XCTAssertEqual(transitions.first?.endDate, nextArrival)
+    }
+
+    @MainActor
+    func testTargetedHistoricalRebuildSkipsSuppressedMiddleStay() throws {
+        let context = try makeContext()
+        let firstDeparture = baseTime.addingTimeInterval(60 * 60)
+        let middleArrival = baseTime.addingTimeInterval(2 * 60 * 60)
+        let middleDeparture = baseTime.addingTimeInterval(3 * 60 * 60)
+        let thirdArrival = baseTime.addingTimeInterval(4 * 60 * 60)
+
+        let first = TimelineEpisode(
+            kind: .stay,
+            startDate: baseTime,
+            endDate: firstDeparture,
+            title: "学校",
+            confidence: .high,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        )
+        let middle = TimelineEpisode(
+            kind: .stay,
+            startDate: middleArrival,
+            endDate: middleDeparture,
+            title: "誤記録",
+            confidence: .low,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        )
+        let third = TimelineEpisode(
+            kind: .stay,
+            startDate: thirdArrival,
+            endDate: thirdArrival.addingTimeInterval(60 * 60),
+            title: "家",
+            confidence: .high,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        )
+        context.insert(first)
+        context.insert(middle)
+        context.insert(third)
+        context.insert(TimelineEpisode(
+            kind: .gap,
+            startDate: firstDeparture,
+            endDate: middleArrival,
+            title: "古いGap1",
+            confidence: .low,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        ))
+        context.insert(TimelineEpisode(
+            kind: .gap,
+            startDate: middleDeparture,
+            endDate: thirdArrival,
+            title: "古いGap2",
+            confidence: .low,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        ))
+        context.insert(UserAssertion(episodeID: middle.id, type: .suppress))
+        try context.save()
+
+        try TimelineEngine().rebuildTransitions(
+            covering: DateInterval(start: firstDeparture, end: thirdArrival),
+            in: context
+        )
+
+        let transitions = try context.fetch(FetchDescriptor<TimelineEpisode>()).filter { $0.kind != .stay }
+        XCTAssertEqual(transitions.count, 1)
+        XCTAssertEqual(transitions.first?.kind, .gap)
+        XCTAssertEqual(transitions.first?.startDate, firstDeparture)
+        XCTAssertEqual(transitions.first?.endDate, thirdArrival)
+    }
+
+    @MainActor
+    func testTargetedHistoricalRebuildPreservesAssertedTransition() throws {
+        let context = try makeContext()
+        let departure = baseTime.addingTimeInterval(60 * 60)
+        let nextArrival = baseTime.addingTimeInterval(3 * 60 * 60)
+
+        context.insert(TimelineEpisode(
+            kind: .stay,
+            startDate: baseTime,
+            endDate: departure,
+            title: "学校",
+            confidence: .high,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        ))
+        context.insert(TimelineEpisode(
+            kind: .stay,
+            startDate: nextArrival,
+            endDate: nextArrival.addingTimeInterval(60 * 60),
+            title: "家",
+            confidence: .high,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        ))
+        let protectedGap = TimelineEpisode(
+            kind: .gap,
+            startDate: departure,
+            endDate: nextArrival,
+            title: "ユーザー保護区間",
+            confidence: .low,
+            sourceVersion: 5,
+            timeZoneIdentifier: tokyo
+        )
+        context.insert(protectedGap)
+        context.insert(UserAssertion(
+            episodeID: protectedGap.id,
+            type: .rename,
+            replacementTitle: protectedGap.title
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildTransitions(
+            covering: DateInterval(start: departure, end: nextArrival),
+            in: context
+        )
+
+        let transitions = try context.fetch(FetchDescriptor<TimelineEpisode>()).filter { $0.kind != .stay }
+        XCTAssertEqual(transitions.count, 1)
+        XCTAssertEqual(transitions.first?.id, protectedGap.id)
+        XCTAssertEqual(transitions.first?.title, "ユーザー保護区間")
     }
 
     @MainActor

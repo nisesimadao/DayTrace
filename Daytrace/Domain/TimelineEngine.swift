@@ -121,6 +121,59 @@ struct TimelineEngine {
         try context.save()
     }
 
+    func rebuildTransitions(covering interval: DateInterval, in context: ModelContext) throws {
+        let existingEpisodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        let assertions = try context.fetch(FetchDescriptor<UserAssertion>()).filter { $0.isActive }
+        let protectedEpisodeIDs = Set(assertions.compactMap(\.episodeID))
+        let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
+
+        for episode in existingEpisodes where episode.kind != .stay {
+            guard !protectedEpisodeIDs.contains(episode.id) else { continue }
+            let episodeEnd = episode.endDate ?? episode.startDate
+            if episode.startDate <= interval.end && episodeEnd >= interval.start {
+                context.delete(episode)
+            }
+        }
+
+        let canonicalStays = existingEpisodes
+            .filter { $0.kind == .stay && !suppressedEpisodeIDs.contains($0.id) }
+            .sorted { $0.startDate < $1.startDate }
+
+        for pair in zip(canonicalStays, canonicalStays.dropFirst()) {
+            guard let departure = pair.0.endDate else { continue }
+            let nextArrival = pair.1.startDate
+            guard nextArrival.timeIntervalSince(departure) >= 60 else { continue }
+            guard departure <= interval.end && nextArrival >= interval.start else { continue }
+
+            let protectedTransitionExists = existingEpisodes.contains { episode in
+                guard episode.kind != .stay, protectedEpisodeIDs.contains(episode.id) else { return false }
+                let episodeEnd = episode.endDate ?? episode.startDate
+                return episode.startDate <= nextArrival && episodeEnd >= departure
+            }
+            guard !protectedTransitionExists else { continue }
+
+            let transitionStart = departure
+            let transitionEnd = nextArrival
+            let descriptor = FetchDescriptor<LocationEvidence>(
+                predicate: #Predicate {
+                    $0.timestamp >= transitionStart && $0.timestamp <= transitionEnd
+                },
+                sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
+            )
+            let locations = try context.fetch(descriptor)
+
+            insertTransition(
+                departure: departure,
+                nextArrival: nextArrival,
+                timeZoneIdentifier: pair.1.timeZoneIdentifier,
+                locations: locations,
+                context: context
+            )
+        }
+
+        try context.save()
+    }
+
     private func reconcile(
         _ episode: TimelineEpisode,
         with visit: VisitEvidence,
