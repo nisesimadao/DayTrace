@@ -17,6 +17,9 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         case unavailable(String)
     }
 
+    private static let alwaysAuthorizationRequestedKey = "hasRequestedAlwaysAuthorization"
+    private static let locationHistoryResetCutoffKey = "locationHistoryResetCutoff"
+
     private let manager = CLLocationManager()
     private var modelContext: ModelContext?
     private var configured = false
@@ -28,6 +31,13 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
     private(set) var lastEvidenceAt: Date?
     private(set) var isRecording = false
     private(set) var health: Health = .notConfigured
+    private(set) var hasRequestedAlwaysAuthorization = UserDefaults.standard.bool(
+        forKey: LocationRecorder.alwaysAuthorizationRequestedKey
+    )
+
+    var canRequestAlwaysInApp: Bool {
+        authorizationStatus == .authorizedWhenInUse && !hasRequestedAlwaysAuthorization
+    }
 
     override private init() {
         super.init()
@@ -55,6 +65,7 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         configured = true
         authorizationStatus = manager.authorizationStatus
         accuracyAuthorization = manager.accuracyAuthorization
+        synchronizeAlwaysRequestState()
         refreshHealth()
 
         if isAuthorized {
@@ -67,9 +78,9 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
     }
 
     func requestAlways() {
-        guard authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways else {
-            return
-        }
+        guard canRequestAlwaysInApp else { return }
+        hasRequestedAlwaysAuthorization = true
+        UserDefaults.standard.set(true, forKey: Self.alwaysAuthorizationRequestedKey)
         manager.requestAlwaysAuthorization()
     }
 
@@ -118,6 +129,24 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         refreshHealth()
     }
 
+    func deleteLocationHistoryKeepingJournal(now: Date = .now) throws {
+        guard let context = modelContext else { return }
+
+        try context.delete(model: LocationEvidence.self)
+        try context.delete(model: VisitEvidence.self)
+        try context.delete(model: TimelineEpisode.self)
+        try context.delete(model: UserAssertion.self)
+        try context.delete(model: PlaceRecord.self)
+        try context.save()
+
+        UserDefaults.standard.set(
+            now.timeIntervalSinceReferenceDate,
+            forKey: Self.locationHistoryResetCutoffKey
+        )
+        lastEvidenceAt = nil
+        refreshHealth(now: now)
+    }
+
     func requestForegroundSnapshot() {
         guard isAuthorized, CLLocationManager.locationServicesEnabled() else { return }
         guard !standardUpdatesActive else { return }
@@ -136,6 +165,7 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
         accuracyAuthorization = manager.accuracyAuthorization
+        synchronizeAlwaysRequestState()
         refreshHealth()
 
         if isAuthorized {
@@ -150,9 +180,13 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         let zone = TimeZone.current.identifier
         let source = standardUpdatesActive ? EvidenceSource.standardLocation : (nextLocationSource ?? .significantChange)
         nextLocationSource = nil
+        let resetCutoff = locationHistoryResetCutoff
 
         for location in locations where location.horizontalAccuracy >= 0 {
             guard location.timestamp.timeIntervalSinceNow > -5 * 60 else { continue }
+            if let resetCutoff, location.timestamp < resetCutoff {
+                continue
+            }
 
             context.insert(LocationEvidence(
                 timestamp: location.timestamp,
@@ -175,9 +209,18 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
     func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
         guard let context = modelContext else { return }
 
-        let arrival: Date? = visit.arrivalDate == .distantPast ? nil : visit.arrivalDate
+        var arrival: Date? = visit.arrivalDate == .distantPast ? nil : visit.arrivalDate
         let departure: Date? = visit.departureDate == .distantFuture ? nil : visit.departureDate
         let observedAt = Date.now
+
+        if let resetCutoff = locationHistoryResetCutoff {
+            if let departure, departure <= resetCutoff {
+                return
+            }
+            if let actualArrival = arrival, actualArrival < resetCutoff {
+                arrival = resetCutoff
+            }
+        }
 
         upsertVisit(
             arrival: arrival,
@@ -215,6 +258,22 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
             return 90
         }
         return defaults.integer(forKey: key)
+    }
+
+    private var locationHistoryResetCutoff: Date? {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: Self.locationHistoryResetCutoffKey) != nil else {
+            return nil
+        }
+        return Date(
+            timeIntervalSinceReferenceDate: defaults.double(forKey: Self.locationHistoryResetCutoffKey)
+        )
+    }
+
+    private func synchronizeAlwaysRequestState() {
+        guard authorizationStatus == .authorizedAlways, !hasRequestedAlwaysAuthorization else { return }
+        hasRequestedAlwaysAuthorization = true
+        UserDefaults.standard.set(true, forKey: Self.alwaysAuthorizationRequestedKey)
     }
 
     private func startDetailedUpdates() {
