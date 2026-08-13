@@ -3,6 +3,38 @@ import Foundation
 import Observation
 import SwiftData
 
+struct LocationHistoryVisitWindow: Equatable {
+    let arrival: Date?
+    let departure: Date?
+}
+
+enum LocationHistoryCutoffPolicy {
+    static func acceptsLocation(timestamp: Date, cutoff: Date?) -> Bool {
+        guard let cutoff else { return true }
+        return timestamp >= cutoff
+    }
+
+    static func adjustedVisit(
+        arrival: Date?,
+        departure: Date?,
+        cutoff: Date?
+    ) -> LocationHistoryVisitWindow? {
+        guard let cutoff else {
+            return LocationHistoryVisitWindow(arrival: arrival, departure: departure)
+        }
+
+        if let departure, departure <= cutoff {
+            return nil
+        }
+
+        let adjustedArrival = arrival.map { max($0, cutoff) }
+        return LocationHistoryVisitWindow(
+            arrival: adjustedArrival,
+            departure: departure
+        )
+    }
+}
+
 @MainActor
 @Observable
 final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegate {
@@ -184,7 +216,10 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
 
         for location in locations where location.horizontalAccuracy >= 0 {
             guard location.timestamp.timeIntervalSinceNow > -5 * 60 else { continue }
-            if let resetCutoff, location.timestamp < resetCutoff {
+            guard LocationHistoryCutoffPolicy.acceptsLocation(
+                timestamp: location.timestamp,
+                cutoff: resetCutoff
+            ) else {
                 continue
             }
 
@@ -209,22 +244,21 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
     func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
         guard let context = modelContext else { return }
 
-        var arrival: Date? = visit.arrivalDate == .distantPast ? nil : visit.arrivalDate
-        let departure: Date? = visit.departureDate == .distantFuture ? nil : visit.departureDate
+        let rawArrival: Date? = visit.arrivalDate == .distantPast ? nil : visit.arrivalDate
+        let rawDeparture: Date? = visit.departureDate == .distantFuture ? nil : visit.departureDate
         let observedAt = Date.now
 
-        if let resetCutoff = locationHistoryResetCutoff {
-            if let departure, departure <= resetCutoff {
-                return
-            }
-            if let actualArrival = arrival, actualArrival < resetCutoff {
-                arrival = resetCutoff
-            }
+        guard let adjusted = LocationHistoryCutoffPolicy.adjustedVisit(
+            arrival: rawArrival,
+            departure: rawDeparture,
+            cutoff: locationHistoryResetCutoff
+        ) else {
+            return
         }
 
         upsertVisit(
-            arrival: arrival,
-            departure: departure,
+            arrival: adjusted.arrival,
+            departure: adjusted.departure,
             observedAt: observedAt,
             latitude: visit.coordinate.latitude,
             longitude: visit.coordinate.longitude,
@@ -232,7 +266,7 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
             in: context
         )
 
-        let freshestDate = departure ?? arrival ?? observedAt
+        let freshestDate = adjusted.departure ?? adjusted.arrival ?? observedAt
         lastEvidenceAt = max(lastEvidenceAt ?? .distantPast, freshestDate)
         try? context.save()
         try? TimelineEngine().rebuildRecentTimeline(in: context)
