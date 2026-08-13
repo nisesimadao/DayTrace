@@ -2,13 +2,16 @@ import Foundation
 import SwiftData
 import UserNotifications
 
+enum DaytraceNotificationRoute {
+    static let destinationKey = "daytraceDestination"
+    static let today = "today"
+}
+
 @MainActor
 enum ReviewReminderService {
     static let enabledKey = "reviewReminderEnabled"
     static let hourKey = "reviewReminderHour"
     static let minuteKey = "reviewReminderMinute"
-    static let destinationKey = "daytraceDestination"
-    static let todayDestination = "today"
 
     static let defaultHour = 21
     static let defaultMinute = 0
@@ -62,7 +65,7 @@ enum ReviewReminderService {
             content.title = "今日を振り返る？"
             content.body = "今日の記録を見返して、残したいことを書いておけます。"
             content.sound = .default
-            content.userInfo = [destinationKey: todayDestination]
+            content.userInfo = [DaytraceNotificationRoute.destinationKey: DaytraceNotificationRoute.today]
 
             let request = UNNotificationRequest(
                 identifier: identifier(for: day),
