@@ -1,3 +1,4 @@
+import CoreLocation
 import MapKit
 import SwiftData
 import SwiftUI
@@ -261,6 +262,9 @@ private struct StayEditorSheet: View {
     @State private var isOngoing: Bool
     @State private var shouldConfirmLocation = false
     @State private var saveErrorMessage: String?
+    @State private var isLookingUpPlace = false
+    @State private var placeLookupMessage: String?
+    @State private var didApplyPlaceSuggestion = false
 
     init(episode: TimelineEpisode) {
         self.episode = episode
@@ -307,12 +311,38 @@ private struct StayEditorSheet: View {
         )
     }
 
+    private var canLookUpPlace: Bool {
+        episode.latitude != nil && episode.longitude != nil && !isLookingUpPlace
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section("場所") {
                     TextField("場所の名前", text: $title)
                         .textInputAutocapitalization(.never)
+
+                    Button(action: lookUpPlaceSuggestion) {
+                        if isLookingUpPlace {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Apple Mapsで候補を検索中")
+                            }
+                        } else {
+                            Label("Apple Mapsで候補を探す", systemImage: "map")
+                        }
+                    }
+                    .disabled(!canLookUpPlace)
+
+                    if didApplyPlaceSuggestion {
+                        Text("Apple Mapsの候補です。内容を確認し、「この場所で合っている」をオンにすると次回から覚えます。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if let placeLookupMessage {
+                        Text(placeLookupMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
                     if episode.confidence == .high && !hasEditedPlaceName {
                         Label("この場所は高い確度で記録されています", systemImage: "checkmark.circle")
@@ -349,7 +379,7 @@ private struct StayEditorSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: save)
-                        .disabled(intervalValidationError != nil)
+                        .disabled(intervalValidationError != nil || isLookingUpPlace)
                 }
             }
         }
@@ -364,6 +394,31 @@ private struct StayEditorSheet: View {
             Button("OK", role: .cancel) { saveErrorMessage = nil }
         } message: {
             Text(saveErrorMessage ?? "")
+        }
+    }
+
+    private func lookUpPlaceSuggestion() {
+        guard let latitude = episode.latitude, let longitude = episode.longitude else { return }
+        isLookingUpPlace = true
+        placeLookupMessage = nil
+        didApplyPlaceSuggestion = false
+
+        Task {
+            do {
+                if let suggestion = try await PlaceSuggestionLookup.suggestion(
+                    latitude: latitude,
+                    longitude: longitude
+                ) {
+                    title = suggestion
+                    shouldConfirmLocation = false
+                    didApplyPlaceSuggestion = true
+                } else {
+                    placeLookupMessage = "この位置では場所の候補を見つけられませんでした。"
+                }
+            } catch {
+                placeLookupMessage = "場所の候補を取得できませんでした。通信状態を確認してもう一度試してください。"
+            }
+            isLookingUpPlace = false
         }
     }
 
@@ -384,5 +439,78 @@ private struct StayEditorSheet: View {
 
         try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
         dismiss()
+    }
+}
+
+@MainActor
+private enum PlaceSuggestionLookup {
+    static func suggestion(latitude: Double, longitude: Double) async throws -> String? {
+        let location = CLLocation(latitude: latitude, longitude: longitude)
+
+        if #available(iOS 26.0, *) {
+            return try await mapKitSuggestion(for: location)
+        } else {
+            return try await legacySuggestion(for: location)
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private static func mapKitSuggestion(for location: CLLocation) async throws -> String? {
+        guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
+        request.preferredLocale = .current
+
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<String?, Error>) in
+            request.getMapItems { [request] items, error in
+                _ = request
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                let suggestion = items?
+                    .lazy
+                    .compactMap(preferredLabel(for:))
+                    .first
+                continuation.resume(returning: suggestion)
+            }
+        }
+    }
+
+    @available(iOS, introduced: 18.0, obsoleted: 26.0)
+    private static func legacySuggestion(for location: CLLocation) async throws -> String? {
+        let placemarks = try await CLGeocoder().reverseGeocodeLocation(
+            location,
+            preferredLocale: .current
+        )
+
+        for placemark in placemarks {
+            let candidates = [
+                placemark.areasOfInterest?.first,
+                placemark.name,
+                placemark.locality,
+            ]
+            if let value = candidates.compactMap(cleaned).first {
+                return value
+            }
+        }
+        return nil
+    }
+
+    @available(iOS 26.0, *)
+    private static func preferredLabel(for item: MKMapItem) -> String? {
+        let candidates = [
+            item.name,
+            item.address?.shortAddress,
+            item.addressRepresentations?.fullAddress(includingRegion: false, singleLine: true),
+            item.address?.fullAddress,
+        ]
+        return candidates.compactMap(cleaned).first
+    }
+
+    private static func cleaned(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
