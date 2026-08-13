@@ -4,8 +4,25 @@ struct DayTimeline: View {
     let episodes: [TimelineEpisode]
     @Binding var selectedEpisodeID: UUID?
     let lastEvidenceAt: Date?
+    let allowsEditing: Bool
     let onEdit: (TimelineEpisode) -> Void
     let onSuppress: (TimelineEpisode) -> Void
+
+    init(
+        episodes: [TimelineEpisode],
+        selectedEpisodeID: Binding<UUID?>,
+        lastEvidenceAt: Date?,
+        allowsEditing: Bool = true,
+        onEdit: @escaping (TimelineEpisode) -> Void,
+        onSuppress: @escaping (TimelineEpisode) -> Void
+    ) {
+        self.episodes = episodes
+        _selectedEpisodeID = selectedEpisodeID
+        self.lastEvidenceAt = lastEvidenceAt
+        self.allowsEditing = allowsEditing
+        self.onEdit = onEdit
+        self.onSuppress = onSuppress
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -16,17 +33,18 @@ struct DayTimeline: View {
                     drawsTopLine: index > 0,
                     drawsBottomLine: index < episodes.count - 1,
                     lastEvidenceAt: lastEvidenceAt,
+                    allowsEditing: allowsEditing,
                     onSelect: {
                         withAnimation(.snappy) {
                             selectedEpisodeID = selectedEpisodeID == episode.id ? nil : episode.id
                         }
                     },
                     onEdit: {
-                        guard episode.kind == .stay else { return }
+                        guard allowsEditing, episode.kind == .stay else { return }
                         onEdit(episode)
                     },
                     onSuppress: {
-                        guard episode.kind == .stay else { return }
+                        guard allowsEditing, episode.kind == .stay else { return }
                         onSuppress(episode)
                     }
                 )
@@ -42,6 +60,7 @@ private struct TimelineEpisodeRow: View {
     let drawsTopLine: Bool
     let drawsBottomLine: Bool
     let lastEvidenceAt: Date?
+    let allowsEditing: Bool
     let onSelect: () -> Void
     let onEdit: () -> Void
     let onSuppress: () -> Void
@@ -88,7 +107,7 @@ private struct TimelineEpisodeRow: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if isSelected && episode.kind == .stay {
+                if allowsEditing && isSelected && episode.kind == .stay {
                     Label("長押しして修正", systemImage: "hand.tap")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -100,16 +119,20 @@ private struct TimelineEpisodeRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
-        .onLongPressGesture(minimumDuration: 0.35, perform: onEdit)
+        .onLongPressGesture(minimumDuration: 0.35) {
+            if allowsEditing { onEdit() }
+        }
         .contextMenu {
-            if episode.kind == .stay {
+            if allowsEditing && episode.kind == .stay {
                 Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
                 Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
             }
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .accessibilityAction(named: "修正", onEdit)
+        .accessibilityAction(named: allowsEditing ? "修正" : "選択") {
+            allowsEditing ? onEdit() : onSelect()
+        }
     }
 
     private var openEndedStatus: String {
