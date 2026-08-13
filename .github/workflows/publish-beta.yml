@@ -1,0 +1,81 @@
+name: Publish DayTrace Beta
+
+on:
+  push:
+    branches:
+      - work/release-publish
+    paths:
+      - .release-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  publish-beta:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Xcode version
+        run: xcodebuild -version
+      - name: Unit tests
+        run: >-
+          xcodebuild
+          -project Daytrace.xcodeproj
+          -scheme Daytrace
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
+          -resultBundlePath ReleaseTests.xcresult
+          CODE_SIGNING_ALLOWED=NO
+          test
+      - name: Build iPhoneOS application
+        run: >-
+          xcodebuild
+          -project Daytrace.xcodeproj
+          -scheme Daytrace
+          -configuration Release
+          -sdk iphoneos
+          -derivedDataPath "$RUNNER_TEMP/DayTraceDerivedData"
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          build
+      - name: Package IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="1.0-beta.1"
+          APP="$RUNNER_TEMP/DayTraceDerivedData/Build/Products/Release-iphoneos/Daytrace.app"
+          FILE="DayTrace-v${VERSION}.ipa"
+          test -d "$APP"
+          mkdir -p dist/Payload
+          ditto "$APP" dist/Payload/Daytrace.app
+          (cd dist && zip -qry "$FILE" Payload)
+          shasum -a 256 "dist/$FILE" > "dist/$FILE.sha256"
+          test -s "dist/$FILE"
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DayTrace-v1.0-beta.1
+          path: |
+            dist/DayTrace-v1.0-beta.1.ipa
+            dist/DayTrace-v1.0-beta.1.ipa.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v1.0-beta.1"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/DayTrace-v1.0-beta.1.ipa dist/DayTrace-v1.0-beta.1.ipa.sha256 --clobber
+          else
+            gh release create "$TAG" \
+              dist/DayTrace-v1.0-beta.1.ipa \
+              dist/DayTrace-v1.0-beta.1.ipa.sha256 \
+              --target "$GITHUB_SHA" \
+              --title "DayTrace v1.0-beta.1" \
+              --notes-file RELEASE_NOTES.md \
+              --prerelease
+          fi
