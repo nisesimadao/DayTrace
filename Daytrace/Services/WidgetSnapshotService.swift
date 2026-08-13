@@ -4,13 +4,27 @@ import WidgetKit
 
 @MainActor
 enum WidgetSnapshotService {
-    static func refresh(in context: ModelContext, now: Date = .now) {
+    private static let minimumRefreshInterval: TimeInterval = 60
+    private static var lastRefreshAt: Date?
+
+    static func refresh(
+        in context: ModelContext,
+        now: Date = .now,
+        force: Bool = false
+    ) {
+        if !force,
+           let lastRefreshAt,
+           now.timeIntervalSince(lastRefreshAt) < minimumRefreshInterval {
+            return
+        }
+
         guard let episodes = try? context.fetch(FetchDescriptor<TimelineEpisode>()),
               let assertions = try? context.fetch(FetchDescriptor<UserAssertion>()),
               let journals = try? context.fetch(FetchDescriptor<JournalEntry>()),
               let places = try? context.fetch(FetchDescriptor<PlaceRecord>()) else {
             return
         }
+        lastRefreshAt = now
 
         let today = CalendarDay(containing: now, timeZone: .current)
         let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
@@ -23,8 +37,15 @@ enum WidgetSnapshotService {
 
         let stays = visibleToday.filter { $0.kind == .stay }
         let placesByID = Dictionary(uniqueKeysWithValues: places.map { ($0.id, $0) })
-        let names = stays.map { displayName(for: $0, placesByID: placesByID) }
-        let currentPlace = stays.last(where: { episode in
+        let rawNames = stays.map { displayName(for: $0, placesByID: placesByID) }
+        let compactNames = rawNames.reduce(into: [String]()) { result, name in
+            if result.last != name {
+                result.append(name)
+            }
+        }
+        let appLockEnabled = UserDefaults.standard.bool(forKey: "appLockEnabled")
+        let visibleNames = appLockEnabled ? [] : Array(compactNames.prefix(12))
+        let currentPlace = appLockEnabled ? nil : stays.last(where: { episode in
             episode.startDate <= now && (episode.endDate == nil || episode.endDate! > now)
         }).map { displayName(for: $0, placesByID: placesByID) }
 
@@ -44,14 +65,31 @@ enum WidgetSnapshotService {
             generatedAt: now,
             visitCount: stays.count,
             movementMinutes: movementMinutes,
-            placeNames: names,
+            placeNames: visibleNames,
             hasJournal: hasJournal,
             currentPlaceName: currentPlace
         )
 
+        if let previous = DaytraceWidgetSnapshotStore.load(),
+           presentsSameContent(previous, snapshot) {
+            return
+        }
+
         if DaytraceWidgetSnapshotStore.save(snapshot) {
             WidgetCenter.shared.reloadTimelines(ofKind: DaytraceWidgetShared.widgetKind)
         }
+    }
+
+    private static func presentsSameContent(
+        _ lhs: DaytraceWidgetSnapshot,
+        _ rhs: DaytraceWidgetSnapshot
+    ) -> Bool {
+        lhs.day == rhs.day
+            && lhs.visitCount == rhs.visitCount
+            && lhs.movementMinutes == rhs.movementMinutes
+            && lhs.placeNames == rhs.placeNames
+            && lhs.hasJournal == rhs.hasJournal
+            && lhs.currentPlaceName == rhs.currentPlaceName
     }
 
     private static func displayName(
