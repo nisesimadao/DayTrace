@@ -45,7 +45,7 @@ struct AppRootView: View {
                 locationRecorder.attach(context: modelContext)
                 locationRecorder.configureIfNeeded()
                 try? await ReviewReminderService.refresh(in: modelContext)
-                WidgetSnapshotService.refresh(in: modelContext)
+                WidgetSnapshotService.refresh(in: modelContext, force: true)
 
                 if appLockEnabled, scenePhase == .active {
                     authenticateIfNeeded()
@@ -64,12 +64,12 @@ struct AppRootView: View {
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .active:
-                    WidgetSnapshotService.refresh(in: modelContext)
+                    WidgetSnapshotService.refresh(in: modelContext, force: true)
                     if appLockEnabled, !isUnlocked {
                         authenticateIfNeeded()
                     }
                 case .inactive, .background:
-                    WidgetSnapshotService.refresh(in: modelContext)
+                    WidgetSnapshotService.refresh(in: modelContext, force: true)
                     if appLockEnabled, !isAuthenticating {
                         isUnlocked = false
                     }
@@ -81,6 +81,7 @@ struct AppRootView: View {
             }
             .onChange(of: appLockEnabled) { _, enabled in
                 authenticationError = nil
+                WidgetSnapshotService.refresh(in: modelContext, force: true)
                 if enabled {
                     // The user is already inside an unlocked session when enabling this.
                     // Lock from the next inactive/background transition onward.
