@@ -29,6 +29,61 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(interval.end.timeIntervalSince(interval.start), 23 * 60 * 60, accuracy: 1)
     }
 
+    func testResetCutoffRejectsOldLocationSamples() {
+        let cutoff = baseTime
+
+        XCTAssertTrue(LocationHistoryCutoffPolicy.acceptsLocation(
+            timestamp: cutoff.addingTimeInterval(1),
+            cutoff: cutoff
+        ))
+        XCTAssertTrue(LocationHistoryCutoffPolicy.acceptsLocation(
+            timestamp: cutoff,
+            cutoff: cutoff
+        ))
+        XCTAssertFalse(LocationHistoryCutoffPolicy.acceptsLocation(
+            timestamp: cutoff.addingTimeInterval(-1),
+            cutoff: cutoff
+        ))
+        XCTAssertTrue(LocationHistoryCutoffPolicy.acceptsLocation(
+            timestamp: cutoff.addingTimeInterval(-10_000),
+            cutoff: nil
+        ))
+    }
+
+    func testResetCutoffDropsEndedVisitAndClampsSpanningVisit() throws {
+        let cutoff = baseTime
+
+        XCTAssertNil(LocationHistoryCutoffPolicy.adjustedVisit(
+            arrival: cutoff.addingTimeInterval(-7_200),
+            departure: cutoff.addingTimeInterval(-1),
+            cutoff: cutoff
+        ))
+
+        let spanning = try XCTUnwrap(LocationHistoryCutoffPolicy.adjustedVisit(
+            arrival: cutoff.addingTimeInterval(-3_600),
+            departure: cutoff.addingTimeInterval(3_600),
+            cutoff: cutoff
+        ))
+        XCTAssertEqual(spanning.arrival, cutoff)
+        XCTAssertEqual(spanning.departure, cutoff.addingTimeInterval(3_600))
+
+        let ongoing = try XCTUnwrap(LocationHistoryCutoffPolicy.adjustedVisit(
+            arrival: cutoff.addingTimeInterval(-1_800),
+            departure: nil,
+            cutoff: cutoff
+        ))
+        XCTAssertEqual(ongoing.arrival, cutoff)
+        XCTAssertNil(ongoing.departure)
+
+        let futureArrival = cutoff.addingTimeInterval(600)
+        let afterReset = try XCTUnwrap(LocationHistoryCutoffPolicy.adjustedVisit(
+            arrival: futureArrival,
+            departure: nil,
+            cutoff: cutoff
+        ))
+        XCTAssertEqual(afterReset.arrival, futureArrival)
+    }
+
     @MainActor
     func testDelayedVisitRetentionUsesVisitEvidenceTime() throws {
         let context = try makeContext()
