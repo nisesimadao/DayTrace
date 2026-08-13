@@ -16,7 +16,7 @@ The product is intentionally not a GPS dashboard. Raw observations, automatic in
 - **No fake precision.** Uncertain times and places are presented as uncertain.
 - **Local first.** The personal beta works without a DayTrace account or backend.
 - **Low-power by default.** Visits and significant-location changes form the passive recording backbone; detailed route recording is optional.
-- **Recorded civil time matters.** History is projected using the time zone stored with the memory rather than assuming the phone's current time zone.
+- **Recorded local date matters.** Each record is projected into its civil date using the time zone stored with that record rather than assuming the phone's current time zone.
 
 ## Current personal beta
 
@@ -43,6 +43,9 @@ The product is intentionally not a GPS dashboard. Raw observations, automatic in
 - Raw-evidence retention policy
 - Optional Face ID / Touch ID / device-passcode app lock
 - App Switcher privacy cover even when app lock is disabled
+- Durable **location-history reset** that removes raw evidence, Timeline, learned Places, and location corrections while preserving Journals and Moment Notes
+- A persisted reset cutoff so delayed Core Location callbacks from before a reset cannot silently repopulate deleted history
+- One in-app retry path for upgrading When In Use location permission to background recording before falling back to system Settings
 - iOS 26 Liquid Glass only for controls, with a non-glass fallback
 
 ## Stack
@@ -90,4 +93,4 @@ GitHub Actions performs an unsigned iOS Simulator build and XCTest run on `macos
 
 ## Status
 
-DayTrace is now at a usable personal-beta stage rather than a UI-only prototype. The highest-value remaining work is real-device battery/accuracy testing, safer arbitrary-day Timeline reprocessing before historical Stay editing is enabled, direct-but-truthful boundary editing, stronger learned-place behavior, explicit privacy deletion controls, and then richer recall features such as photos / On This Day / optional sync.
+DayTrace is now at a usable personal-beta stage rather than a UI-only prototype. The highest-value remaining work is real-device battery/accuracy testing, safer arbitrary-day Timeline reprocessing before historical Stay editing is enabled, direct-but-truthful boundary editing, stronger learned-place behavior, dedicated regression tests for the newer data semantics, and then richer recall features such as photos / On This Day / optional sync.
