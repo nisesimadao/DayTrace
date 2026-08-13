@@ -6,7 +6,7 @@ on:
       - 'release/**'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-test-package:
@@ -59,3 +59,25 @@ jobs:
             dist/*.sha256
           if-no-files-found: error
           retention-days: 30
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#release/}"
+          TAG="v${VERSION}"
+          FILE="DayTrace-v${VERSION}.ipa"
+          TITLE="DayTrace ${TAG}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "dist/$FILE" "dist/$FILE.sha256" --clobber
+          else
+            gh release create "$TAG" \
+              "dist/$FILE" \
+              "dist/$FILE.sha256" \
+              --target "$GITHUB_SHA" \
+              --title "$TITLE" \
+              --notes-file RELEASE_NOTES.md \
+              --prerelease
+          fi
