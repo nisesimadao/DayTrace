@@ -3,6 +3,7 @@ import SwiftData
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import UserNotifications
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -20,6 +21,9 @@ struct SettingsView: View {
     @AppStorage("detailedRoutesEnabled") private var detailedRoutesEnabled = false
     @AppStorage("rawEvidenceRetentionDays") private var rawEvidenceRetentionDays = 90
     @AppStorage("appLockEnabled") private var appLockEnabled = false
+    @AppStorage(ReviewReminderService.enabledKey) private var reviewReminderEnabled = false
+    @AppStorage(ReviewReminderService.hourKey) private var reviewReminderHour = ReviewReminderService.defaultHour
+    @AppStorage(ReviewReminderService.minuteKey) private var reviewReminderMinute = ReviewReminderService.defaultMinute
 
     @State private var exportDocument: DayTraceExportDocument?
     @State private var exportContentType: UTType = .json
@@ -28,6 +32,8 @@ struct SettingsView: View {
     @State private var exportErrorMessage: String?
     @State private var appLockErrorMessage: String?
     @State private var privacyActionErrorMessage: String?
+    @State private var reminderErrorMessage: String?
+    @State private var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
     @State private var isHistoryDeletionConfirmationPresented = false
 
     private var suppressedCount: Int {
@@ -56,6 +62,52 @@ struct SettingsView: View {
         )
     }
 
+    private var reviewReminderBinding: Binding<Bool> {
+        Binding(
+            get: { reviewReminderEnabled },
+            set: { enabled in
+                if enabled {
+                    Task { @MainActor in
+                        await enableReviewReminder()
+                    }
+                } else {
+                    reviewReminderEnabled = false
+                    Task { @MainActor in
+                        await ReviewReminderService.disable()
+                        notificationAuthorizationStatus = await ReviewReminderService.authorizationStatus()
+                    }
+                }
+            }
+        )
+    }
+
+    private var reviewReminderTimeBinding: Binding<Date> {
+        Binding(
+            get: {
+                Calendar.current.date(
+                    bySettingHour: reviewReminderHour,
+                    minute: reviewReminderMinute,
+                    second: 0,
+                    of: .now
+                ) ?? .now
+            },
+            set: { date in
+                let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+                reviewReminderHour = components.hour ?? ReviewReminderService.defaultHour
+                reviewReminderMinute = components.minute ?? ReviewReminderService.defaultMinute
+
+                guard reviewReminderEnabled else { return }
+                Task { @MainActor in
+                    do {
+                        try await ReviewReminderService.refresh(in: modelContext)
+                    } catch {
+                        reminderErrorMessage = error.localizedDescription
+                    }
+                }
+            }
+        )
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -73,6 +125,28 @@ struct SettingsView: View {
                     Text("自動記録")
                 } footer: {
                     Text("詳細な経路は必要な場面で位置更新を増やすため、バッテリー消費が増える場合があります。")
+                }
+
+                Section {
+                    Toggle("夜に振り返る", isOn: reviewReminderBinding)
+
+                    if reviewReminderEnabled {
+                        DatePicker(
+                            "通知時刻",
+                            selection: reviewReminderTimeBinding,
+                            displayedComponents: .hourAndMinute
+                        )
+
+                        if notificationAuthorizationStatus == .denied {
+                            Button("通知設定を開く") {
+                                openSystemSettings()
+                            }
+                        }
+                    }
+                } header: {
+                    Text("振り返り")
+                } footer: {
+                    Text("指定した時刻に一度だけ振り返りを促します。通知には場所名を表示しません。日記を書いた日は、その日の通知を取り消します。")
                 }
 
                 Section {
@@ -203,6 +277,20 @@ struct SettingsView: View {
             } message: {
                 Text(privacyActionErrorMessage ?? "")
             }
+            .alert(
+                "振り返り通知を設定できません",
+                isPresented: Binding(
+                    get: { reminderErrorMessage != nil },
+                    set: { if !$0 { reminderErrorMessage = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) { reminderErrorMessage = nil }
+            } message: {
+                Text(reminderErrorMessage ?? "")
+            }
+            .task {
+                notificationAuthorizationStatus = await ReviewReminderService.authorizationStatus()
+            }
         }
     }
 
@@ -235,6 +323,38 @@ struct SettingsView: View {
             EmptyView()
         @unknown default:
             EmptyView()
+        }
+    }
+
+    @MainActor
+    private func enableReviewReminder() async {
+        do {
+            var status = await ReviewReminderService.authorizationStatus()
+
+            if status == .notDetermined {
+                let granted = try await ReviewReminderService.requestAuthorization()
+                status = await ReviewReminderService.authorizationStatus()
+                notificationAuthorizationStatus = status
+                guard granted else {
+                    reviewReminderEnabled = false
+                    reminderErrorMessage = "通知が許可されませんでした。必要ならiPhoneの設定から通知を有効にできます。"
+                    return
+                }
+            }
+
+            guard status == .authorized || status == .provisional || status == .ephemeral else {
+                notificationAuthorizationStatus = status
+                reviewReminderEnabled = false
+                reminderErrorMessage = "通知がiPhoneの設定でオフになっています。"
+                return
+            }
+
+            notificationAuthorizationStatus = status
+            reviewReminderEnabled = true
+            try await ReviewReminderService.refresh(in: modelContext)
+        } catch {
+            reviewReminderEnabled = false
+            reminderErrorMessage = error.localizedDescription
         }
     }
 
