@@ -199,6 +199,53 @@ final class RegressionTests: XCTestCase {
     }
 
     @MainActor
+    func testMomentNoteOnlyHistoricalJournalUsesNoteTimezone() throws {
+        let context = try makeContext()
+        let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        let tokyoZone = try XCTUnwrap(TimeZone(identifier: tokyo))
+        let targetDay = CalendarDayComponents(2026, 8, 12)
+        let noteTimestamp = try XCTUnwrap(
+            ISO8601DateFormatter().date(from: "2026-08-13T01:00:00Z")
+        )
+
+        XCTAssertEqual(
+            CalendarDay(containing: noteTimestamp, timeZone: losAngeles),
+            targetDay
+        )
+        XCTAssertNotEqual(
+            CalendarDay(containing: noteTimestamp, timeZone: tokyoZone),
+            targetDay
+        )
+
+        context.insert(MomentNote(
+            timestamp: noteTimestamp,
+            body: "旅先のメモ",
+            timeZoneIdentifier: losAngeles.identifier
+        ))
+        try context.save()
+
+        let fallbackDate = try XCTUnwrap(targetDay.date(in: tokyoZone))
+        let fallbackDay = DayInterval(containing: fallbackDate, timeZone: tokyoZone)
+        let journal = try XCTUnwrap(JournalEditingService().save(
+            day: fallbackDay,
+            body: "帰宅後に書いた日記",
+            existingJournal: nil,
+            in: context,
+            now: noteTimestamp.addingTimeInterval(24 * 60 * 60)
+        ))
+
+        XCTAssertEqual(journal.timeZoneIdentifier, losAngeles.identifier)
+        XCTAssertEqual(TimelineDayProjection.day(for: journal), targetDay)
+        let representative = try XCTUnwrap(targetDay.date(in: losAngeles))
+        let expectedAnchor = DayInterval(containing: representative, timeZone: losAngeles).start
+        XCTAssertEqual(
+            journal.dayAnchor.timeIntervalSinceReferenceDate,
+            expectedAnchor.timeIntervalSinceReferenceDate,
+            accuracy: 0.001
+        )
+    }
+
+    @MainActor
     func testLocationHistoryResetPreservesJournalAndMomentNote() throws {
         let context = try makeContext()
         let resetTime = baseTime.addingTimeInterval(2 * 60 * 60)

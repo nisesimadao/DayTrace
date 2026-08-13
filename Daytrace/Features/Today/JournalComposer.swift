@@ -272,16 +272,66 @@ struct JournalEditingService {
             return journal
         }
 
+        let anchor = try preferredAnchor(
+            for: targetDay,
+            fallback: day,
+            in: context
+        )
         let journal = JournalEntry(
-            dayAnchor: day.start,
+            dayAnchor: anchor.start,
             body: trimmed,
             createdAt: now,
             updatedAt: now,
-            timeZoneIdentifier: day.timeZone.identifier
+            timeZoneIdentifier: anchor.timeZone.identifier
         )
         context.insert(journal)
         try context.save()
         return journal
+    }
+
+    private func preferredAnchor(
+        for day: CalendarDay,
+        fallback: DayInterval,
+        in context: ModelContext
+    ) throws -> DayInterval {
+        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>(
+            sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+        ))
+        if let episode = episodes.first(where: {
+            TimelineDayProjection.episode($0, intersects: day)
+        }) {
+            return projectedInterval(
+                for: day,
+                timeZoneIdentifier: episode.timeZoneIdentifier,
+                fallback: fallback
+            )
+        }
+
+        let notes = try context.fetch(FetchDescriptor<MomentNote>(
+            sortBy: [SortDescriptor(\MomentNote.timestamp)]
+        ))
+        if let note = notes.first(where: {
+            let zone = TimelineDayProjection.timeZone(identifier: $0.timeZoneIdentifier)
+            return CalendarDay(containing: $0.timestamp, timeZone: zone) == day
+        }) {
+            return projectedInterval(
+                for: day,
+                timeZoneIdentifier: note.timeZoneIdentifier,
+                fallback: fallback
+            )
+        }
+
+        return fallback
+    }
+
+    private func projectedInterval(
+        for day: CalendarDay,
+        timeZoneIdentifier: String,
+        fallback: DayInterval
+    ) -> DayInterval {
+        let zone = TimelineDayProjection.timeZone(identifier: timeZoneIdentifier)
+        guard let date = day.date(in: zone) else { return fallback }
+        return DayInterval(containing: date, timeZone: zone)
     }
 }
 
