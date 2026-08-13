@@ -236,9 +236,10 @@ final class RegressionTests: XCTestCase {
 
         XCTAssertEqual(journal.timeZoneIdentifier, losAngeles.identifier)
         XCTAssertEqual(TimelineDayProjection.day(for: journal), targetDay)
+        let expectedAnchor = try XCTUnwrap(targetDay.date(in: losAngeles))
         XCTAssertEqual(
-            journal.dayAnchor,
-            try XCTUnwrap(targetDay.date(in: losAngeles)),
+            journal.dayAnchor.timeIntervalSinceReferenceDate,
+            expectedAnchor.timeIntervalSinceReferenceDate,
             accuracy: 0.001
         )
     }
