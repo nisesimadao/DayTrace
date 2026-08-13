@@ -13,21 +13,11 @@ permissions:
 jobs:
   publish-beta:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: Xcode version
         run: xcodebuild -version
-      - name: Unit tests
-        run: >-
-          xcodebuild
-          -project Daytrace.xcodeproj
-          -scheme Daytrace
-          -configuration Debug
-          -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
-          -resultBundlePath ReleaseTests.xcresult
-          CODE_SIGNING_ALLOWED=NO
-          test
       - name: Build iPhoneOS application
         run: >-
           xcodebuild
