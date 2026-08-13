@@ -124,9 +124,11 @@ struct TimelineEngine {
     func rebuildTransitions(covering interval: DateInterval, in context: ModelContext) throws {
         let existingEpisodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
         let assertions = try context.fetch(FetchDescriptor<UserAssertion>()).filter { $0.isActive }
+        let protectedEpisodeIDs = Set(assertions.compactMap(\.episodeID))
         let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
 
         for episode in existingEpisodes where episode.kind != .stay {
+            guard !protectedEpisodeIDs.contains(episode.id) else { continue }
             let episodeEnd = episode.endDate ?? episode.startDate
             if episode.startDate <= interval.end && episodeEnd >= interval.start {
                 context.delete(episode)
@@ -142,6 +144,13 @@ struct TimelineEngine {
             let nextArrival = pair.1.startDate
             guard nextArrival.timeIntervalSince(departure) >= 60 else { continue }
             guard departure <= interval.end && nextArrival >= interval.start else { continue }
+
+            let protectedTransitionExists = existingEpisodes.contains { episode in
+                guard episode.kind != .stay, protectedEpisodeIDs.contains(episode.id) else { return false }
+                let episodeEnd = episode.endDate ?? episode.startDate
+                return episode.startDate <= nextArrival && episodeEnd >= departure
+            }
+            guard !protectedTransitionExists else { continue }
 
             let transitionStart = departure
             let transitionEnd = nextArrival
