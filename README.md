@@ -36,7 +36,8 @@ The product is intentionally not a GPS dashboard. Raw observations, automatic in
 - One journal entry per recorded calendar day
 - Quick timestamped **Moment Notes**
 - Apple Journaling Suggestions picker integration
-- History calendar, Recent list, and full past-day detail
+- History calendar, Recent list, personal learned-Places map, and full past-day detail
+- Personal Places map uses confirmed `PlaceRecord` identity rather than raw GPS dots; it shows visit count/latest recorded-local day, keeps pin/list selection synchronized, and can reopen that Place's latest recorded day
 - History search across Timeline text, journals, and Moment Notes
 - Local JSON backup export
 - Human-readable Markdown archive export
