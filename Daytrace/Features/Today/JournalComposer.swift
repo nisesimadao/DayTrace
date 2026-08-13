@@ -95,6 +95,8 @@ struct JournalComposer: View {
                         .buttonStyle(.daytraceGlassProminent)
                 }
             }
+
+            OnThisDaySection()
         }
         .onAppear {
             bodyText = existingJournal?.body ?? ""
@@ -229,6 +231,150 @@ private struct MomentNoteComposerSheet: View {
         ))
         try? modelContext.save()
         dismiss()
+    }
+}
+
+private struct OnThisDayMemory {
+    let day: CalendarDay
+    let yearsAgo: Int
+    let routeText: String?
+    let journalExcerpt: String?
+}
+
+private struct OnThisDaySection: View {
+    @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
+    @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
+    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
+    @Query(sort: \PlaceRecord.name) private var places: [PlaceRecord]
+
+    private var today: CalendarDay {
+        CalendarDay(containing: .now, timeZone: .current)
+    }
+
+    private var suppressedEpisodeIDs: Set<UUID> {
+        TimelineVisibility.suppressedEpisodeIDs(from: assertions)
+    }
+
+    private var privatePlaceIDs: Set<UUID> {
+        Set(places.filter { $0.isPrivate }.map { $0.id })
+    }
+
+    private var visibleStays: [TimelineEpisode] {
+        episodes.filter { episode in
+            episode.kind == .stay && !suppressedEpisodeIDs.contains(episode.id)
+        }
+    }
+
+    private var memory: OnThisDayMemory? {
+        var candidateDays = Set<CalendarDay>()
+
+        for stay in visibleStays {
+            candidateDays.formUnion(TimelineDayProjection.coveredDays(by: stay, limit: 366))
+        }
+        for journal in journals {
+            candidateDays.insert(TimelineDayProjection.day(for: journal))
+        }
+
+        let matchingDays = candidateDays.filter { candidate in
+            candidate.year < today.year
+                && candidate.month == today.month
+                && candidate.day == today.day
+        }
+        guard let matchingDay = matchingDays.max(by: { lhs, rhs in
+            lhs.year < rhs.year
+        }) else {
+            return nil
+        }
+
+        let stays = visibleStays
+            .filter { TimelineDayProjection.episode($0, intersects: matchingDay) }
+            .sorted { $0.startDate < $1.startDate }
+        let journal = journals.first { TimelineDayProjection.journal($0, belongsTo: matchingDay) }
+
+        let route = routeText(for: stays)
+        let trimmedJournal = journal?.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let excerpt = (trimmedJournal?.isEmpty == false) ? trimmedJournal : nil
+        guard route != nil || excerpt != nil else { return nil }
+
+        return OnThisDayMemory(
+            day: matchingDay,
+            yearsAgo: today.year - matchingDay.year,
+            routeText: route,
+            journalExcerpt: excerpt
+        )
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if let memory {
+            VStack(alignment: .leading, spacing: 12) {
+                Divider()
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+
+                Text("\(memory.yearsAgo)年前の今日")
+                    .font(.title3.bold())
+
+                NavigationLink {
+                    HistoricalDayDetailView(day: memory.day)
+                } label: {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text("\(memory.day.year)年\(memory.day.month)月\(memory.day.day)日")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+
+                            if let routeText = memory.routeText {
+                                Text(routeText)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+
+                            if let excerpt = memory.journalExcerpt {
+                                Text(excerpt)
+                                    .font(.body)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(3)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(14)
+                    .background(
+                        Color(.secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(memory.yearsAgo)年前の今日、\(memory.day.year)年\(memory.day.month)月\(memory.day.day)日の記録を開く")
+            }
+        }
+    }
+
+    private func routeText(for stays: [TimelineEpisode]) -> String? {
+        var names: [String] = []
+        for stay in stays {
+            let name: String
+            if let placeID = stay.placeID, privatePlaceIDs.contains(placeID) {
+                name = "非公開の場所"
+            } else {
+                name = stay.title
+            }
+
+            if names.last != name {
+                names.append(name)
+            }
+        }
+
+        guard !names.isEmpty else { return nil }
+        let visible = Array(names.prefix(4))
+        let suffix = names.count > visible.count ? " → …" : ""
+        return visible.joined(separator: " → ") + suffix
     }
 }
 
