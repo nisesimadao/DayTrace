@@ -18,7 +18,7 @@ final class DaytraceAppDelegate: NSObject, UIApplicationDelegate, @preconcurrenc
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let userInfo = response.notification.request.content.userInfo
-        if userInfo[ReviewReminderService.destinationKey] as? String == ReviewReminderService.todayDestination {
+        if userInfo[DaytraceNotificationRoute.destinationKey] as? String == DaytraceNotificationRoute.today {
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .daytraceOpenToday, object: nil)
             }
