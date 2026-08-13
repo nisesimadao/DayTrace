@@ -45,6 +45,7 @@ Raw evidence is evidence, not canonical truth. It remains separately persisted s
 - `DayInterval` is the timezone-specific projection used when an actual start/end `Date` range is required.
 - Overnight stays remain one episode and are clipped only by day projection.
 - History, search grouping, journal uniqueness, Markdown export, and past-day detail use these recorded-local-date semantics.
+- When creating a new Journal for a historical civil day, recorded Timeline timezone context is preferred; if there is no Timeline context, a Moment Note recorded on that civil day can provide the timezone before falling back to the caller/device timezone.
 
 ## Persistence
 
@@ -73,6 +74,18 @@ Current behavior uses:
 
 Detailed updates should eventually become adaptive: wake around likely departure/arrival, sample while useful, then sleep again. Continuous high-accuracy GPS is intentionally not the default.
 
+### Location-history reset cutoff
+
+Location-history reset stores a cutoff timestamp. The production Core Location ingestion path and regression tests share the same cutoff policy:
+
+- location samples older than the cutoff are rejected
+- samples at/after the cutoff are accepted normally
+- a Visit that ended at/before the cutoff is discarded
+- a Visit spanning the cutoff is accepted with its arrival clamped to the cutoff
+- an ongoing Visit that began before the cutoff can likewise restart at the cutoff
+
+This prevents a delayed Core Location callback from silently recreating history the user explicitly deleted.
+
 ## Timeline inference
 
 `TimelineEngine` currently rebuilds the recent window and maintains three primary episode kinds:
@@ -96,6 +109,7 @@ Normal edits affect canonical memory, not raw evidence:
 - Rename / arrival / departure corrections create or update `UserAssertion` records.
 - Stay suppression is reversible and represented as an assertion.
 - Confirmation can learn a reusable Place.
+- A user can explicitly ask Apple Maps for a place/address suggestion in the Stay editor; the suggestion is only a candidate and is not automatically treated as a confirmed learned Place.
 - Overlapping Stay edits are rejected structurally.
 - Raw evidence remains separate from the user's corrected Timeline.
 
@@ -110,6 +124,20 @@ A recorded calendar day has at most one `JournalEntry`. Saving reconciles accide
 ### Journaling Suggestions
 
 The app only receives suggestion details after a person explicitly chooses a suggestion in the system picker. The picker is a memory cue, not a background data source. The integration is gated with `canImport(JournalingSuggestions)` so the core journal remains usable in environments without the module.
+
+## Evening review reminders
+
+Review reminders are local `UserNotifications`; there is no push backend.
+
+- They are opt-in from Settings, which is also where notification permission is requested.
+- Default review time is 21:00 and can be changed.
+- Notification title/body contain no visited place names or raw coordinates.
+- The app schedules a rolling set of day-specific one-shot requests instead of one repeating request so individual Journal days can be skipped or cancelled.
+- Existing Journal days are excluded during refresh.
+- Saving/updating a Journal cancels that civil day's pending reminder immediately.
+- Deleting a Journal causes the managed reminder schedule to refresh.
+- Tapping a DayTrace review notification routes the app to Today, including when the app was backgrounded while History was selected.
+- Only DayTrace-managed reminder identifiers are removed when refreshing/disabling the feature.
 
 ## History and recall
 
@@ -142,7 +170,23 @@ SwiftUI `fileExporter` / `FileDocument` hands the generated file to the system s
 - **Location-history reset** deletes `LocationEvidence`, `VisitEvidence`, `TimelineEpisode`, `UserAssertion`, and `PlaceRecord`, while deliberately preserving `JournalEntry` and `MomentNote`.
 - The reset time is persisted as a cutoff. Delayed location samples older than that cutoff are discarded instead of silently repopulating deleted history.
 - A Visit that ended before the cutoff is discarded; a Visit spanning the reset can restart at the cutoff so only post-reset history returns.
+- Review notification copy is deliberately location-free so a lock-screen notification does not reveal a school, home, shop, or route.
 - Raw-only manual deletion is intentionally not exposed yet because deleting raw Visit anchors alone can change survival/re-delivery semantics for recent canonical Stays.
+
+## Regression strategy
+
+The XCTest suite now includes focused coverage for newer semantics rather than only happy-path UI/domain behavior, including:
+
+- civil-day projection across timezone changes and DST boundaries
+- delayed Visit retention behavior
+- nearby same-name Place reuse versus distant same-name separation
+- one-Journal-per-CalendarDay duplicate reconciliation
+- historical MomentNote-only Journal timezone anchoring
+- location-history reset preserving Journals/Moment Notes and persisting its cutoff
+- rejection of pre-cutoff delayed location samples
+- clamping of Visits that span the reset cutoff
+
+The cutoff tests exercise the same pure policy used by production Core Location ingestion rather than exposing private delegate internals just for testing.
 
 ## Current milestones
 
@@ -151,6 +195,7 @@ SwiftUI `fileExporter` / `FileDocument` hands the generated file to the system s
 - passive location evidence recording
 - Stay / Move / Gap inference
 - user-protected rename / retime / confirmation
+- user-invoked Apple Maps candidate lookup for Stay naming
 - reversible suppression + undo
 - current-location freshness states
 - recorded-timezone civil-day projection
@@ -165,14 +210,17 @@ SwiftUI `fileExporter` / `FileDocument` hands the generated file to the system s
 - durable location-history reset with delayed-callback cutoff
 - improved When In Use → background-recording recovery flow
 - diary-first empty Today state
+- Timeline selection ↔ map camera/pin synchronization
+- privacy-safe configurable evening review reminders
+- focused regression coverage for newer data semantics
 - CI build + XCTest on iOS Simulator
 
 ### Next: harden the beta
 
 - physical-device battery / accuracy tests
+- real-device notification permission/delivery/timezone checks
 - safer arbitrary-day Timeline regeneration
 - historical Stay editing after that regeneration work
-- dedicated regression tests for timezone/DST, delayed Visits, Place reuse, Journal uniqueness, and reset semantics
 - direct boundary editing only with a truthful time interaction model
 - adaptive detailed-route recording
 - debug / support diagnostics where useful
