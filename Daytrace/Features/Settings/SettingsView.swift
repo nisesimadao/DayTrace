@@ -1,13 +1,11 @@
 import Foundation
 import SwiftData
 import SwiftUI
-import UIKit
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.openURL) private var openURL
     @Environment(LocationRecorder.self) private var recorder
 
     @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
@@ -17,7 +15,6 @@ struct SettingsView: View {
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
     @Query(sort: \LocationEvidence.timestamp) private var locations: [LocationEvidence]
 
-    @AppStorage("detailedRoutesEnabled") private var detailedRoutesEnabled = false
     @AppStorage("rawEvidenceRetentionDays") private var rawEvidenceRetentionDays = 90
     @AppStorage("appLockEnabled") private var appLockEnabled = false
 
@@ -59,21 +56,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    LabeledContent("状態", value: healthLabel)
-                    LabeledContent("位置情報", value: authorizationLabel)
-
-                    permissionRecoveryControl
-
-                    Toggle("詳細な移動経路を記録", isOn: $detailedRoutesEnabled)
-                        .onChange(of: detailedRoutesEnabled) { _, enabled in
-                            recorder.setDetailedRoutesEnabled(enabled)
-                        }
-                } header: {
-                    Text("自動記録")
-                } footer: {
-                    Text("詳細な経路は必要な場面で位置更新を増やすため、バッテリー消費が増える場合があります。")
-                }
+                TrackingDiagnosticsSection()
 
                 ReviewReminderSettingsSection()
 
@@ -208,38 +191,6 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder
-    private var permissionRecoveryControl: some View {
-        switch recorder.authorizationStatus {
-        case .notDetermined:
-            Button("位置情報を許可") {
-                recorder.requestWhenInUse()
-            }
-        case .authorizedWhenInUse:
-            if recorder.canRequestAlwaysInApp {
-                Button("閉じている間も記録する") {
-                    recorder.requestAlways()
-                }
-            } else {
-                Button("設定で「常に許可」に変更") {
-                    openSystemSettings()
-                }
-            }
-        case .denied:
-            Button("位置情報をオンにする") {
-                openSystemSettings()
-            }
-        case .restricted:
-            Text("この端末では位置情報の変更が制限されています。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .authorizedAlways:
-            EmptyView()
-        @unknown default:
-            EmptyView()
-        }
-    }
-
     private func prepareExport(_ format: DayTraceExportFormat) {
         do {
             let data: Data
@@ -285,33 +236,6 @@ struct SettingsView: View {
             try TimelineEngine().rebuildRecentTimeline(in: modelContext)
         } catch {
             privacyActionErrorMessage = error.localizedDescription
-        }
-    }
-
-    private func openSystemSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        openURL(url)
-    }
-
-    private var healthLabel: String {
-        switch recorder.health {
-        case .healthy: "正常"
-        case .limitedAccuracy: "精度を制限中"
-        case .needsPermission: "オフ"
-        case .stale: "最近の記録なし"
-        case .unavailable: "要確認"
-        case .notConfigured: "確認中"
-        }
-    }
-
-    private var authorizationLabel: String {
-        switch recorder.authorizationStatus {
-        case .authorizedAlways: "常に許可"
-        case .authorizedWhenInUse: "使用中のみ"
-        case .denied: "許可しない"
-        case .restricted: "制限あり"
-        case .notDetermined: "未設定"
-        @unknown default: "不明"
         }
     }
 }
