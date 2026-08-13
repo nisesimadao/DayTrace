@@ -217,8 +217,8 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
             if let departure, departure <= resetCutoff {
                 return
             }
-            if let arrival, arrival < resetCutoff {
-                selfClamp(&arrival, to: resetCutoff)
+            if let actualArrival = arrival, actualArrival < resetCutoff {
+                arrival = resetCutoff
             }
         }
 
@@ -274,10 +274,6 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         guard authorizationStatus == .authorizedAlways, !hasRequestedAlwaysAuthorization else { return }
         hasRequestedAlwaysAuthorization = true
         UserDefaults.standard.set(true, forKey: Self.alwaysAuthorizationRequestedKey)
-    }
-
-    private func selfClamp(_ value: inout Date?, to cutoff: Date) {
-        value = cutoff
     }
 
     private func startDetailedUpdates() {
