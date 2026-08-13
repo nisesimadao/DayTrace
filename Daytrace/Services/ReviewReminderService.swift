@@ -36,7 +36,7 @@ enum ReviewReminderService {
         }
 
         let journals = try context.fetch(FetchDescriptor<JournalEntry>())
-        let completedDays = Set(journals.map(TimelineDayProjection.day(for:)))
+        let completedDays = Set(journals.map { TimelineDayProjection.day(for: $0) })
         let hour = storedHour
         let minute = storedMinute
         let calendar = Calendar.current
