@@ -44,6 +44,7 @@ struct AppRootView: View {
             .task {
                 locationRecorder.attach(context: modelContext)
                 locationRecorder.configureIfNeeded()
+                try? await ReviewReminderService.refresh(in: modelContext)
 
                 if appLockEnabled, scenePhase == .active {
                     authenticateIfNeeded()

@@ -1,6 +1,7 @@
 #if canImport(JournalingSuggestions)
 import JournalingSuggestions
 #endif
+import Foundation
 import SwiftData
 import SwiftUI
 
@@ -259,6 +260,11 @@ struct JournalEditingService {
             if !matchingJournals.isEmpty {
                 try context.save()
             }
+            if UserDefaults.standard.bool(forKey: ReviewReminderService.enabledKey) {
+                Task { @MainActor in
+                    try? await ReviewReminderService.refresh(in: context)
+                }
+            }
             return nil
         }
 
@@ -269,6 +275,7 @@ struct JournalEditingService {
                 context.delete(duplicate)
             }
             try context.save()
+            ReviewReminderService.cancel(for: targetDay)
             return journal
         }
 
@@ -286,6 +293,7 @@ struct JournalEditingService {
         )
         context.insert(journal)
         try context.save()
+        ReviewReminderService.cancel(for: targetDay)
         return journal
     }
 

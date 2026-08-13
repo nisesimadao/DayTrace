@@ -1,4 +1,9 @@
+import Foundation
 import SwiftUI
+
+extension Notification.Name {
+    static let daytraceOpenToday = Notification.Name("daytrace.openToday")
+}
 
 struct AppShellView: View {
     @State private var selectedTab: AppTab = .today
@@ -20,6 +25,9 @@ struct AppShellView: View {
                 Label("履歴", systemImage: "calendar")
             }
             .tag(AppTab.history)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .daytraceOpenToday)) { _ in
+            selectedTab = .today
         }
     }
 }
