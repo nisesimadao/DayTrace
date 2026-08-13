@@ -70,6 +70,10 @@ private struct TimelineEpisodeRow: View {
     let onEdit: () -> Void
     let onSuppress: () -> Void
 
+    private var canEdit: Bool {
+        allowsEditing && episode.kind == .stay
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             Text(TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
@@ -112,7 +116,7 @@ private struct TimelineEpisodeRow: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if allowsEditing && isSelected && episode.kind == .stay {
+                if canEdit && isSelected {
                     Label("長押しして修正", systemImage: "hand.tap")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -125,10 +129,10 @@ private struct TimelineEpisodeRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .onLongPressGesture(minimumDuration: 0.35) {
-            if allowsEditing { onEdit() }
+            if canEdit { onEdit() }
         }
         .contextMenu {
-            if allowsEditing && episode.kind == .stay {
+            if canEdit {
                 Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
                 if allowsSuppression {
                     Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
@@ -137,8 +141,8 @@ private struct TimelineEpisodeRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .accessibilityAction(named: allowsEditing ? "修正" : "選択") {
-            allowsEditing ? onEdit() : onSelect()
+        .accessibilityAction(named: canEdit ? "修正" : "選択") {
+            canEdit ? onEdit() : onSelect()
         }
     }
 
