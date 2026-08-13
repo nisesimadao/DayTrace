@@ -1,0 +1,61 @@
+name: Package iOS IPA
+
+on:
+  push:
+    branches:
+      - 'release/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Xcode version
+        run: xcodebuild -version
+      - name: Unit tests
+        run: >-
+          xcodebuild
+          -project Daytrace.xcodeproj
+          -scheme Daytrace
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
+          -resultBundlePath ReleaseTests.xcresult
+          CODE_SIGNING_ALLOWED=NO
+          test
+      - name: Build iPhoneOS application
+        run: >-
+          xcodebuild
+          -project Daytrace.xcodeproj
+          -scheme Daytrace
+          -configuration Release
+          -sdk iphoneos
+          -derivedDataPath "$RUNNER_TEMP/DayTraceDerivedData"
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          build
+      - name: Package application
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#release/}"
+          APP="$RUNNER_TEMP/DayTraceDerivedData/Build/Products/Release-iphoneos/Daytrace.app"
+          FILE="DayTrace-v${VERSION}.ipa"
+          test -d "$APP"
+          mkdir -p dist/Payload
+          ditto "$APP" dist/Payload/Daytrace.app
+          (cd dist && zip -qry "$FILE" Payload)
+          shasum -a 256 "dist/$FILE" > "dist/$FILE.sha256"
+          test -s "dist/$FILE"
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DayTrace-IPA
+          path: |
+            dist/*.ipa
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
