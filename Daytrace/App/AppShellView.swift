@@ -19,7 +19,7 @@ struct AppShellView: View {
             .tag(AppTab.today)
 
             NavigationStack {
-                HistoryView()
+                HistoryRootView()
             }
             .tabItem {
                 Label("履歴", systemImage: "calendar")
