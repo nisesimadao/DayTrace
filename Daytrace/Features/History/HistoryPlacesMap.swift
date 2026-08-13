@@ -240,10 +240,19 @@ private struct SelectedHistoryPlaceCard: View {
 
             Spacer()
 
-            if summary.latestDay != nil {
-                Text("最後の記録")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.tertiary)
+            if let latestDay = summary.latestDay {
+                NavigationLink {
+                    HistoricalDayDetailView(day: latestDay)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("最後の記録")
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("最後に訪れた日の記録を見る")
             }
         }
         .padding(14)
