@@ -42,6 +42,30 @@ struct DayMap: View {
             RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
                 .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
         }
+        .onChange(of: selectedEpisodeID) { _, selectedID in
+            focusMap(on: selectedID)
+        }
+        .sensoryFeedback(.selection, trigger: selectedEpisodeID)
+    }
+
+    private func focusMap(on episodeID: UUID?) {
+        guard let episodeID,
+              let episode = locatableEpisodes.first(where: { $0.id == episodeID }),
+              let latitude = episode.latitude,
+              let longitude = episode.longitude else {
+            return
+        }
+
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        let region = MKCoordinateRegion(
+            center: coordinate,
+            latitudinalMeters: 900,
+            longitudinalMeters: 900
+        )
+
+        withAnimation(.snappy) {
+            position = .region(region)
+        }
     }
 }
 
