@@ -56,11 +56,14 @@ struct HistoryPlacesMap: View {
     }
 
     private var summaries: [HistoryPlaceSummary] {
-        places.compactMap { place in
-            let visits = visibleEpisodes.filter {
-                $0.kind == .stay && $0.placeID == place.id
-            }
-            guard !visits.isEmpty else { return nil }
+        var staysByPlaceID: [UUID: [TimelineEpisode]] = [:]
+        for episode in visibleEpisodes where episode.kind == .stay {
+            guard let placeID = episode.placeID else { continue }
+            staysByPlaceID[placeID, default: []].append(episode)
+        }
+
+        return places.compactMap { place in
+            guard let visits = staysByPlaceID[place.id], !visits.isEmpty else { return nil }
 
             let latest = visits.max { $0.startDate < $1.startDate }
             return HistoryPlaceSummary(
@@ -196,11 +199,8 @@ private struct HistoryPlaceSummary: Identifiable {
 
     var visitSummary: String {
         let countText = "\(visitCount)回"
-        guard let latestVisitDate else { return countText }
-        let date = latestVisitDate.formatted(
-            .dateTime.month().day().locale(Locale(identifier: "ja_JP"))
-        )
-        return "\(countText) · 最後 \(date)"
+        guard let latestDay else { return countText }
+        return "\(countText) · 最後 \(latestDay.month)月\(latestDay.day)日"
     }
 }
 
