@@ -38,11 +38,13 @@ Raw evidence is evidence, not canonical truth. It remains separately persisted s
 ## Time model
 
 - Persist absolute `Date` values.
-- Persist the timezone identifier associated with evidence / memory.
-- `CalendarDay` represents a recorded civil day (`year/month/day/time-zone`) rather than the phone's current calendar day.
-- `DayInterval` is a projection, not a stored ownership relationship.
+- Persist the timezone identifier associated with each evidence / memory record.
+- `CalendarDay` is a timezone-neutral civil-date key containing only `year/month/day`.
+- A record becomes a `CalendarDay` by interpreting its absolute `Date` in **that record's stored timezone** and extracting the resulting year/month/day.
+- This keeps History grouped by the local date on which something was experienced without binding the date key itself to whichever timezone the phone uses later.
+- `DayInterval` is the timezone-specific projection used when an actual start/end `Date` range is required.
 - Overnight stays remain one episode and are clipped only by day projection.
-- History, search grouping, journal uniqueness, Markdown export, and past-day detail use the recorded day/time-zone semantics.
+- History, search grouping, journal uniqueness, Markdown export, and past-day detail use these recorded-local-date semantics.
 
 ## Persistence
 
@@ -67,6 +69,7 @@ Current behavior uses:
 - A one-shot foreground location snapshot when the app opens
 - Continuous standard location updates only when **Detailed routes** is explicitly enabled
 - A raw-evidence retention policy, with Visit retention based on the visit's actual departure/arrival time rather than delayed callback delivery time
+- A remembered one-time in-app attempt to upgrade When In Use authorization to background recording before Settings becomes the recovery path
 
 Detailed updates should eventually become adaptive: wake around likely departure/arrival, sample while useful, then sleep again. Continuous high-accuracy GPS is intentionally not the default.
 
@@ -125,7 +128,7 @@ History search currently matches visible Timeline title/subtitle text, Journal t
 All export generation is local.
 
 - **JSON**: Timeline, Places, Journal entries, Moment Notes, and UserAssertions. Raw location samples are excluded.
-- **Markdown**: human-readable day archive using recorded day/time-zone projection.
+- **Markdown**: human-readable day archive using recorded-local-date projection.
 - **GPX**: retained raw `LocationEvidence` only, explicitly chosen by the user. Gaps longer than ten minutes start a new track segment so missing evidence is not rendered as a fake continuous route.
 
 SwiftUI `fileExporter` / `FileDocument` hands the generated file to the system save UI.
@@ -136,8 +139,10 @@ SwiftUI `fileExporter` / `FileDocument` hands the generated file to the system s
 - App content is covered whenever the scene is inactive/background so App Switcher snapshots do not expose location history or journal text.
 - Raw evidence has a separate retention policy from durable Timeline / journal memory.
 - Core use requires no backend.
-
-Explicit destructive deletion controls are still being finalized. The UI must not claim that raw-only deletion preserves canonical Timeline unless the engine can guarantee that detached recent Stay episodes will survive future rebuilds without duplicate re-delivery.
+- **Location-history reset** deletes `LocationEvidence`, `VisitEvidence`, `TimelineEpisode`, `UserAssertion`, and `PlaceRecord`, while deliberately preserving `JournalEntry` and `MomentNote`.
+- The reset time is persisted as a cutoff. Delayed location samples older than that cutoff are discarded instead of silently repopulating deleted history.
+- A Visit that ended before the cutoff is discarded; a Visit spanning the reset can restart at the cutoff so only post-reset history returns.
+- Raw-only manual deletion is intentionally not exposed yet because deleting raw Visit anchors alone can change survival/re-delivery semantics for recent canonical Stays.
 
 ## Current milestones
 
@@ -148,7 +153,7 @@ Explicit destructive deletion controls are still being finalized. The UI must no
 - user-protected rename / retime / confirmation
 - reversible suppression + undo
 - current-location freshness states
-- recorded-time-zone day projection
+- recorded-timezone civil-day projection
 - one Journal per CalendarDay
 - Place learning and nearby duplicate reuse
 - Moment Notes
@@ -157,16 +162,17 @@ Explicit destructive deletion controls are still being finalized. The UI must no
 - JSON / Markdown / GPX export
 - raw evidence retention cleanup
 - app lock + App Switcher privacy cover
+- durable location-history reset with delayed-callback cutoff
+- improved When In Use → background-recording recovery flow
 - diary-first empty Today state
 - CI build + XCTest on iOS Simulator
 
 ### Next: harden the beta
 
 - physical-device battery / accuracy tests
-- explicit privacy deletion controls
 - safer arbitrary-day Timeline regeneration
 - historical Stay editing after that regeneration work
-- dedicated regression tests for timezone/DST, delayed Visits, Place reuse, Journal uniqueness, and deletion semantics
+- dedicated regression tests for timezone/DST, delayed Visits, Place reuse, Journal uniqueness, and reset semantics
 - direct boundary editing only with a truthful time interaction model
 - adaptive detailed-route recording
 - debug / support diagnostics where useful
