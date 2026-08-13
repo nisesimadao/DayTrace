@@ -27,10 +27,11 @@ The product is intentionally not a GPS dashboard. Raw observations, automatic in
 - `Stay / Move / Gap` canonical timeline
 - Explicit Gap generation instead of fabricated movement
 - Place learning after user confirmation, including nearby same-name Place reuse to reduce GPS-drift duplicates
+- User-invoked Apple Maps place/address suggestions in the Stay editor; a suggestion is not treated as confirmation or learned truth until the user saves/affirms it
 - Long-press Stay editor for place name and arrival/departure time
 - Reversible Stay suppression with undo
 - Persistent `UserAssertion` layer that protects manual corrections from re-analysis
-- Compact day map linked to timeline selection
+- Compact day map linked bidirectionally to timeline selection; selecting a Stay focuses its map pin/camera
 - Diary-first empty Today state that does not render an empty world map
 - One journal entry per recorded calendar day
 - Quick timestamped **Moment Notes**
@@ -44,8 +45,10 @@ The product is intentionally not a GPS dashboard. Raw observations, automatic in
 - Optional Face ID / Touch ID / device-passcode app lock
 - App Switcher privacy cover even when app lock is disabled
 - Durable **location-history reset** that removes raw evidence, Timeline, learned Places, and location corrections while preserving Journals and Moment Notes
-- A persisted reset cutoff so delayed Core Location callbacks from before a reset cannot silently repopulate deleted history
+- A persisted reset cutoff so delayed Core Location callbacks from before a reset cannot silently repopulate deleted history; Visits spanning the cutoff restart at the cutoff
 - One in-app retry path for upgrading When In Use location permission to background recording before falling back to system Settings
+- Optional privacy-safe evening review reminders with a configurable time; notification copy contains no place names, Journal days are skipped/cancelled, and tapping a reminder opens Today
+- Focused regression coverage for timezone/DST projection, delayed Visits, Place reuse, Journal uniqueness, historical Journal timezone anchoring, and reset-cutoff ingestion semantics
 - iOS 26 Liquid Glass only for controls, with a non-glass fallback
 
 ## Stack
@@ -55,6 +58,7 @@ The product is intentionally not a GPS dashboard. Raw observations, automatic in
 - SwiftData
 - Core Location
 - MapKit
+- UserNotifications
 - LocalAuthentication
 - Uniform Type Identifiers / FileDocument export
 - Journaling Suggestions
@@ -93,4 +97,4 @@ GitHub Actions performs an unsigned iOS Simulator build and XCTest run on `macos
 
 ## Status
 
-DayTrace is now at a usable personal-beta stage rather than a UI-only prototype. The highest-value remaining work is real-device battery/accuracy testing, safer arbitrary-day Timeline reprocessing before historical Stay editing is enabled, direct-but-truthful boundary editing, stronger learned-place behavior, dedicated regression tests for the newer data semantics, and then richer recall features such as photos / On This Day / optional sync.
+DayTrace is at a usable personal-beta stage rather than a UI-only prototype. The highest-value remaining work is now mostly **real-device hardening and interaction polish**: physical-device battery/accuracy and notification behavior, safer arbitrary-day Timeline regeneration before historical Stay editing is enabled, direct-but-truthful boundary editing, stronger learned-place management, adaptive detailed-route recording, and then richer recall features such as photos / On This Day / optional sync.
