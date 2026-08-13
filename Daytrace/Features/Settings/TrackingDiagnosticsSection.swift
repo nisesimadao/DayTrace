@@ -21,7 +21,6 @@ struct TrackingDiagnosticsSection: View {
 
             if canRequestSnapshot {
                 Button("記録状態を再確認") {
-                    recorder.refreshSystemState()
                     recorder.requestForegroundSnapshot()
                 }
             }
@@ -36,11 +35,8 @@ struct TrackingDiagnosticsSection: View {
             Text("「最後の位置」はDayTraceが最後に受け取った位置・訪問の時刻です。長時間更新がない場合でも、推測で履歴を埋めません。詳細な経路は位置更新を増やすため、バッテリー消費が増える場合があります。")
         }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
-            recorder.refreshSystemState()
-            if canRequestSnapshot {
-                recorder.requestForegroundSnapshot()
-            }
+            guard phase == .active, canRequestSnapshot else { return }
+            recorder.requestForegroundSnapshot()
         }
     }
 
