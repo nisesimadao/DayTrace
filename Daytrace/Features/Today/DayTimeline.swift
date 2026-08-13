@@ -5,6 +5,7 @@ struct DayTimeline: View {
     @Binding var selectedEpisodeID: UUID?
     let lastEvidenceAt: Date?
     let allowsEditing: Bool
+    let allowsSuppression: Bool
     let onEdit: (TimelineEpisode) -> Void
     let onSuppress: (TimelineEpisode) -> Void
 
@@ -13,6 +14,7 @@ struct DayTimeline: View {
         selectedEpisodeID: Binding<UUID?>,
         lastEvidenceAt: Date?,
         allowsEditing: Bool = true,
+        allowsSuppression: Bool = true,
         onEdit: @escaping (TimelineEpisode) -> Void,
         onSuppress: @escaping (TimelineEpisode) -> Void
     ) {
@@ -20,6 +22,7 @@ struct DayTimeline: View {
         _selectedEpisodeID = selectedEpisodeID
         self.lastEvidenceAt = lastEvidenceAt
         self.allowsEditing = allowsEditing
+        self.allowsSuppression = allowsSuppression
         self.onEdit = onEdit
         self.onSuppress = onSuppress
     }
@@ -34,6 +37,7 @@ struct DayTimeline: View {
                     drawsBottomLine: index < episodes.count - 1,
                     lastEvidenceAt: lastEvidenceAt,
                     allowsEditing: allowsEditing,
+                    allowsSuppression: allowsSuppression,
                     onSelect: {
                         withAnimation(.snappy) {
                             selectedEpisodeID = selectedEpisodeID == episode.id ? nil : episode.id
@@ -44,7 +48,7 @@ struct DayTimeline: View {
                         onEdit(episode)
                     },
                     onSuppress: {
-                        guard allowsEditing, episode.kind == .stay else { return }
+                        guard allowsEditing, allowsSuppression, episode.kind == .stay else { return }
                         onSuppress(episode)
                     }
                 )
@@ -61,6 +65,7 @@ private struct TimelineEpisodeRow: View {
     let drawsBottomLine: Bool
     let lastEvidenceAt: Date?
     let allowsEditing: Bool
+    let allowsSuppression: Bool
     let onSelect: () -> Void
     let onEdit: () -> Void
     let onSuppress: () -> Void
@@ -125,7 +130,9 @@ private struct TimelineEpisodeRow: View {
         .contextMenu {
             if allowsEditing && episode.kind == .stay {
                 Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
-                Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
+                if allowsSuppression {
+                    Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
+                }
             }
         }
         .accessibilityElement(children: .combine)
