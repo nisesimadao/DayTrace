@@ -23,8 +23,14 @@
 		96D9C8627357393F2A3FC534 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCB4BE100A57104365B0375C /* SettingsView.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* ReviewReminderSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F60718293A4B5C6D /* ReviewReminderSettingsSection.swift */; };
 		C3D4E5F60718293A4B5C6D7E /* SettingsExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F60718293A4B5C6D7E8F /* SettingsExport.swift */; };
+		AABBCCDDEEFF001122334401 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDDEEFF001122334411 /* WidgetSnapshot.swift */; };
+		AABBCCDDEEFF001122334402 /* WidgetSnapshotService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDDEEFF001122334412 /* WidgetSnapshotService.swift */; };
 		B10E3CA8CAE2B374B1B0DAE4 /* DayProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 460F25DBC8CCDF079BB510D6 /* DayProjectionTests.swift */; };
 		7A31F4C9B2D84E5FA601C773 /* RegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C892B71F6E45AA930CB521 /* RegressionTests.swift */; };
+		AABBCCDDEEFF001122334403 /* DaytraceWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDDEEFF001122334413 /* DaytraceWidget.swift */; };
+		AABBCCDDEEFF001122334404 /* WidgetSnapshot.swift in Widget Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDDEEFF001122334411 /* WidgetSnapshot.swift */; };
+		AABBCCDDEEFF001122334405 /* DaytraceWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = AABBCCDDEEFF001122334415 /* DaytraceWidget.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+
 		C93B5F26A4A3D937AA1E6CB9 /* DaytraceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Daytrace/DaytraceApp.swift"; sourceTree = SOURCE_ROOT; };
 		A60F6D5AD9FAB13B6F542B7E /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Daytrace/App/AppRootView.swift"; sourceTree = SOURCE_ROOT; };
 		47DD9F5A668297A8C33B12D2 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Daytrace/App/AppShellView.swift"; sourceTree = SOURCE_ROOT; };
@@ -44,98 +50,60 @@
 		DCB4BE100A57104365B0375C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Daytrace/Features/Settings/SettingsView.swift"; sourceTree = SOURCE_ROOT; };
 		B2C3D4E5F60718293A4B5C6D /* ReviewReminderSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Daytrace/Features/Settings/ReviewReminderSettingsSection.swift"; sourceTree = SOURCE_ROOT; };
 		D4E5F60718293A4B5C6D7E8F /* SettingsExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Daytrace/Features/Settings/SettingsExport.swift"; sourceTree = SOURCE_ROOT; };
+		AABBCCDDEEFF001122334411 /* WidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Daytrace/Shared/WidgetSnapshot.swift"; sourceTree = SOURCE_ROOT; };
+		AABBCCDDEEFF001122334412 /* WidgetSnapshotService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Daytrace/Services/WidgetSnapshotService.swift"; sourceTree = SOURCE_ROOT; };
 		36EAD80A2F72A7812D4B752A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Daytrace/Resources/Info.plist"; sourceTree = SOURCE_ROOT; };
 		3B88414880F13BF251FE0238 /* Daytrace.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Daytrace/Resources/Daytrace.entitlements"; sourceTree = SOURCE_ROOT; };
 		460F25DBC8CCDF079BB510D6 /* DayProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DaytraceTests/DayProjectionTests.swift"; sourceTree = SOURCE_ROOT; };
 		D4C892B71F6E45AA930CB521 /* RegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DaytraceTests/RegressionTests.swift"; sourceTree = SOURCE_ROOT; };
+		AABBCCDDEEFF001122334413 /* DaytraceWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DaytraceWidget/DaytraceWidget.swift"; sourceTree = SOURCE_ROOT; };
+		AABBCCDDEEFF001122334414 /* DaytraceWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "DaytraceWidget/DaytraceWidget.entitlements"; sourceTree = SOURCE_ROOT; };
+		AABBCCDDEEFF001122334416 /* Widget Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "DaytraceWidget/Info.plist"; sourceTree = SOURCE_ROOT; };
 		B6CDB6E5D160E013280D3C68 /* Daytrace.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Daytrace.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A8D8270AA6DB8732282C9541 /* DaytraceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DaytraceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		458FEFC27F33C1744B7A4290 /* Daytrace */ = {isa = PBXGroup; children = (C93B5F26A4A3D937AA1E6CB9, A60F6D5AD9FAB13B6F542B7E, 47DD9F5A668297A8C33B12D2, 4E7315AA94D600BAD4BE738C, 08937B9E3A8BF4D3D503E1E3, C1B36BF642DFB7A09CC2BCFA, C82C8117F0F2D6C0DBD9137C, 99A5AE1EEF62B8C9C34D7134, 1A2B3C4D5E6F708192A3B4C5, 40B4A5CCBD39E809C2045FB5, CA0114625ECB5AAB435C429B, 8AFDCE23C96280E52FBA8EA2, F853451F744A781E86564BE0, 32011EBA4EB7D85FC14ABB5F, 3D645203B45FE9560E8FFBDE, F60718293A4B5C6D7E8F901A, DCB4BE100A57104365B0375C, B2C3D4E5F60718293A4B5C6D, D4E5F60718293A4B5C6D7E8F, 36EAD80A2F72A7812D4B752A, 3B88414880F13BF251FE0238); name = Daytrace; sourceTree = "<group>"; };
+		AABBCCDDEEFF001122334415 /* DaytraceWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DaytraceWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+
+		458FEFC27F33C1744B7A4290 /* Daytrace */ = {isa = PBXGroup; children = (C93B5F26A4A3D937AA1E6CB9, A60F6D5AD9FAB13B6F542B7E, 47DD9F5A668297A8C33B12D2, 4E7315AA94D600BAD4BE738C, 08937B9E3A8BF4D3D503E1E3, C1B36BF642DFB7A09CC2BCFA, C82C8117F0F2D6C0DBD9137C, 99A5AE1EEF62B8C9C34D7134, 1A2B3C4D5E6F708192A3B4C5, AABBCCDDEEFF001122334412, AABBCCDDEEFF001122334411, 40B4A5CCBD39E809C2045FB5, CA0114625ECB5AAB435C429B, 8AFDCE23C96280E52FBA8EA2, F853451F744A781E86564BE0, 32011EBA4EB7D85FC14ABB5F, 3D645203B45FE9560E8FFBDE, F60718293A4B5C6D7E8F901A, DCB4BE100A57104365B0375C, B2C3D4E5F60718293A4B5C6D, D4E5F60718293A4B5C6D7E8F, 36EAD80A2F72A7812D4B752A, 3B88414880F13BF251FE0238); name = Daytrace; sourceTree = "<group>"; };
+		AABBCCDDEEFF001122334420 /* DaytraceWidget */ = {isa = PBXGroup; children = (AABBCCDDEEFF001122334413, AABBCCDDEEFF001122334416, AABBCCDDEEFF001122334414); name = DaytraceWidget; sourceTree = "<group>"; };
 		EEFE21A1443933CA4DE017DA /* DaytraceTests */ = {isa = PBXGroup; children = (460F25DBC8CCDF079BB510D6, D4C892B71F6E45AA930CB521); name = DaytraceTests; sourceTree = "<group>"; };
-		00C45FD35CB0F9C5F764F070 /* Products */ = {isa = PBXGroup; children = (B6CDB6E5D160E013280D3C68, A8D8270AA6DB8732282C9541); name = Products; sourceTree = "<group>"; };
-		ADCF10F76EBF2A74473E9DC4 = {isa = PBXGroup; children = (458FEFC27F33C1744B7A4290, EEFE21A1443933CA4DE017DA, 00C45FD35CB0F9C5F764F070); sourceTree = "<group>"; };
-		8682261519D15BD64A9E5D31 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (83A986C7E6A4A4D8EE060886, D67BB02D30B089594D3A75A0, C25ECBB1A1CA2F51630733C3, 4BF0C35D246157E0FF048EA2, 58286CB6F57F6C1E999A47B1, 7794881E691D7E6433ED00F0, B44833BC159D61ED83C10560, D5C410016E39AFD707C19E8F, 6D3A4B5C7E8F9012A3B4C5D6, 18EA5EA69D74FB2B336D6D08, 3190E904A9E3AEE6F006A831, 0D101EC9C0D565A1F3BA2CFF, F7906312789C7B4839469EDE, F95D160501221DCDE49C16C9, 20B7B85C360E8F4D191482FE, E5F60718293A4B5C6D7E8F90, 96D9C8627357393F2A3FC534, A1B2C3D4E5F60718293A4B5C, C3D4E5F60718293A4B5C6D7E); runOnlyForDeploymentPostprocessing = 0; };
+		00C45FD35CB0F9C5F764F070 /* Products */ = {isa = PBXGroup; children = (B6CDB6E5D160E013280D3C68, AABBCCDDEEFF001122334415, A8D8270AA6DB8732282C9541); name = Products; sourceTree = "<group>"; };
+		ADCF10F76EBF2A74473E9DC4 = {isa = PBXGroup; children = (458FEFC27F33C1744B7A4290, AABBCCDDEEFF001122334420, EEFE21A1443933CA4DE017DA, 00C45FD35CB0F9C5F764F070); sourceTree = "<group>"; };
+
+		8682261519D15BD64A9E5D31 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (83A986C7E6A4A4D8EE060886, D67BB02D30B089594D3A75A0, C25ECBB1A1CA2F51630733C3, 4BF0C35D246157E0FF048EA2, 58286CB6F57F6C1E999A47B1, 7794881E691D7E6433ED00F0, B44833BC159D61ED83C10560, D5C410016E39AFD707C19E8F, 6D3A4B5C7E8F9012A3B4C5D6, AABBCCDDEEFF001122334402, AABBCCDDEEFF001122334401, 18EA5EA69D74FB2B336D6D08, 3190E904A9E3AEE6F006A831, 0D101EC9C0D565A1F3BA2CFF, F7906312789C7B4839469EDE, F95D160501221DCDE49C16C9, 20B7B85C360E8F4D191482FE, E5F60718293A4B5C6D7E8F90, 96D9C8627357393F2A3FC534, A1B2C3D4E5F60718293A4B5C, C3D4E5F60718293A4B5C6D7E); runOnlyForDeploymentPostprocessing = 0; };
 		F001BC2AF9EB5498B3360756 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		E28FAD8F60ECDED9B4AD087A = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		AABBCCDDEEFF001122334421 /* Embed App Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (AABBCCDDEEFF001122334405); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
 		29BEEA3D856852A8CC3247ED = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B10E3CA8CAE2B374B1B0DAE4, 7A31F4C9B2D84E5FA601C773); runOnlyForDeploymentPostprocessing = 0; };
 		D6B208DB47DA230159E08E40 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		96B4702EF39C73C4DCF44E6C = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		AABBCCDDEEFF001122334422 /* Widget Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AABBCCDDEEFF001122334403, AABBCCDDEEFF001122334404); runOnlyForDeploymentPostprocessing = 0; };
+		AABBCCDDEEFF001122334423 /* Widget Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		AABBCCDDEEFF001122334424 /* Widget Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+
 		F9B1326DFC287D15EB97FEF5 = {isa = PBXContainerItemProxy; containerPortal = 98F54143AB4E86B28C3AFEE0; proxyType = 1; remoteGlobalIDString = 29C7B681C8D62CBAC94D51C0; remoteInfo = Daytrace; };
+		AABBCCDDEEFF001122334425 /* Widget Proxy */ = {isa = PBXContainerItemProxy; containerPortal = 98F54143AB4E86B28C3AFEE0; proxyType = 1; remoteGlobalIDString = AABBCCDDEEFF001122334430; remoteInfo = DaytraceWidget; };
 		B57660E4BEB73D5292856B6A = {isa = PBXTargetDependency; target = 29C7B681C8D62CBAC94D51C0; targetProxy = F9B1326DFC287D15EB97FEF5; };
-		29C7B681C8D62CBAC94D51C0 /* Daytrace */ = {isa = PBXNativeTarget; buildConfigurationList = 32995943DE67267A65D32CA9; buildPhases = (8682261519D15BD64A9E5D31, F001BC2AF9EB5498B3360756, E28FAD8F60ECDED9B4AD087A); buildRules = (); dependencies = (); name = Daytrace; productName = Daytrace; productReference = B6CDB6E5D160E013280D3C68; productType = "com.apple.product-type.application"; };
+		AABBCCDDEEFF001122334426 /* Widget Dependency */ = {isa = PBXTargetDependency; target = AABBCCDDEEFF001122334430; targetProxy = AABBCCDDEEFF001122334425; };
+
+		29C7B681C8D62CBAC94D51C0 /* Daytrace */ = {isa = PBXNativeTarget; buildConfigurationList = 32995943DE67267A65D32CA9; buildPhases = (8682261519D15BD64A9E5D31, F001BC2AF9EB5498B3360756, E28FAD8F60ECDED9B4AD087A, AABBCCDDEEFF001122334421); buildRules = (); dependencies = (AABBCCDDEEFF001122334426); name = Daytrace; productName = Daytrace; productReference = B6CDB6E5D160E013280D3C68; productType = "com.apple.product-type.application"; };
 		EA5815D3D83100CE3F564964 /* DaytraceTests */ = {isa = PBXNativeTarget; buildConfigurationList = F722E0DC847BA009AE0DBB50; buildPhases = (29BEEA3D856852A8CC3247ED, D6B208DB47DA230159E08E40, 96B4702EF39C73C4DCF44E6C); buildRules = (); dependencies = (B57660E4BEB73D5292856B6A); name = DaytraceTests; productName = DaytraceTests; productReference = A8D8270AA6DB8732282C9541; productType = "com.apple.product-type.bundle.unit-test"; };
-		98F54143AB4E86B28C3AFEE0 /* Project object */ = {isa = PBXProject; attributes = {LastSwiftUpdateCheck = 2600; LastUpgradeCheck = 2600; TargetAttributes = {29C7B681C8D62CBAC94D51C0 = {CreatedOnToolsVersion = 26.0; }; EA5815D3D83100CE3F564964 = {CreatedOnToolsVersion = 26.0; TestTargetID = 29C7B681C8D62CBAC94D51C0; }; }; }; buildConfigurationList = 12D04D787E90C9B967248BFD; compatibilityVersion = "Xcode 15.0"; developmentRegion = ja; hasScannedForEncodings = 0; knownRegions = (ja, en, Base); mainGroup = ADCF10F76EBF2A74473E9DC4; productRefGroup = 00C45FD35CB0F9C5F764F070; projectDirPath = ""; projectRoot = ""; targets = (29C7B681C8D62CBAC94D51C0, EA5815D3D83100CE3F564964); };
-		73BFC4993D558C2844970A56 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
-			CLANG_ENABLE_MODULES = YES;
-			SWIFT_VERSION = 6.0;
-			IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-			SDKROOT = iphoneos;
-			DEBUG_INFORMATION_FORMAT = dwarf;
-			ENABLE_TESTABILITY = YES;
-			SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-		}; name = Debug; };
-		3C5BC6FE1E438E679FB7F74F /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
-			CLANG_ENABLE_MODULES = YES;
-			SWIFT_VERSION = 6.0;
-			IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-			SDKROOT = iphoneos;
-			DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-			SWIFT_COMPILATION_MODE = wholemodule;
-			SWIFT_OPTIMIZATION_LEVEL = "-O";
-		}; name = Release; };
-		CC982C4F58FE5F6D2B2680C2 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
-			CODE_SIGN_ENTITLEMENTS = Daytrace/Resources/Daytrace.entitlements;
-			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 1;
-			GENERATE_INFOPLIST_FILE = NO;
-			INFOPLIST_FILE = Daytrace/Resources/Info.plist;
-			MARKETING_VERSION = 1.0;
-			PRODUCT_BUNDLE_IDENTIFIER = dev.nisesimadao.Daytrace;
-			PRODUCT_NAME = "$(TARGET_NAME)";
-			SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-			SUPPORTS_MACCATALYST = NO;
-			SWIFT_EMIT_LOC_STRINGS = YES;
-			TARGETED_DEVICE_FAMILY = 1;
-		}; name = Debug; };
-		06B6A15813AE62FDCFE74422 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
-			CODE_SIGN_ENTITLEMENTS = Daytrace/Resources/Daytrace.entitlements;
-			CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 1;
-			GENERATE_INFOPLIST_FILE = NO;
-			INFOPLIST_FILE = Daytrace/Resources/Info.plist;
-			MARKETING_VERSION = 1.0;
-			PRODUCT_BUNDLE_IDENTIFIER = dev.nisesimadao.Daytrace;
-			PRODUCT_NAME = "$(TARGET_NAME)";
-			SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-			SUPPORTS_MACCATALYST = NO;
-			SWIFT_EMIT_LOC_STRINGS = YES;
-			TARGETED_DEVICE_FAMILY = 1;
-		}; name = Release; };
-		A39F4EA2C585763103886C2C /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
-			CODE_SIGN_STYLE = Automatic;
-			GENERATE_INFOPLIST_FILE = YES;
-			IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-			PRODUCT_BUNDLE_IDENTIFIER = dev.nisesimadao.DaytraceTests;
-			PRODUCT_NAME = "$(TARGET_NAME)";
-			SWIFT_VERSION = 6.0;
-			TARGETED_DEVICE_FAMILY = 1;
-			TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Daytrace.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Daytrace";
-			BUNDLE_LOADER = "$(TEST_HOST)";
-		}; name = Debug; };
-		B570061E7D3C2C486722CCA4 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
-			CODE_SIGN_STYLE = Automatic;
-			GENERATE_INFOPLIST_FILE = YES;
-			IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-			PRODUCT_BUNDLE_IDENTIFIER = dev.nisesimadao.DaytraceTests;
-			PRODUCT_NAME = "$(TARGET_NAME)";
-			SWIFT_VERSION = 6.0;
-			TARGETED_DEVICE_FAMILY = 1;
-			TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Daytrace.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Daytrace";
-			BUNDLE_LOADER = "$(TEST_HOST)";
-		}; name = Release; };
+		AABBCCDDEEFF001122334430 /* DaytraceWidget */ = {isa = PBXNativeTarget; buildConfigurationList = AABBCCDDEEFF001122334440; buildPhases = (AABBCCDDEEFF001122334422, AABBCCDDEEFF001122334423, AABBCCDDEEFF001122334424); buildRules = (); dependencies = (); name = DaytraceWidget; productName = DaytraceWidget; productReference = AABBCCDDEEFF001122334415; productType = "com.apple.product-type.app-extension"; };
+
+		98F54143AB4E86B28C3AFEE0 /* Project object */ = {isa = PBXProject; attributes = {LastSwiftUpdateCheck = 2600; LastUpgradeCheck = 2600; TargetAttributes = {29C7B681C8D62CBAC94D51C0 = {CreatedOnToolsVersion = 26.0; }; EA5815D3D83100CE3F564964 = {CreatedOnToolsVersion = 26.0; TestTargetID = 29C7B681C8D62CBAC94D51C0; }; AABBCCDDEEFF001122334430 = {CreatedOnToolsVersion = 26.0; }; }; }; buildConfigurationList = 12D04D787E90C9B967248BFD; compatibilityVersion = "Xcode 15.0"; developmentRegion = ja; hasScannedForEncodings = 0; knownRegions = (ja, en, Base); mainGroup = ADCF10F76EBF2A74473E9DC4; productRefGroup = 00C45FD35CB0F9C5F764F070; projectDirPath = ""; projectRoot = ""; targets = (29C7B681C8D62CBAC94D51C0, AABBCCDDEEFF001122334430, EA5815D3D83100CE3F564964); };
+
+		73BFC4993D558C2844970A56 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 6.0; IPHONEOS_DEPLOYMENT_TARGET = 18.0; SDKROOT = iphoneos; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+		3C5BC6FE1E438E679FB7F74F /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 6.0; IPHONEOS_DEPLOYMENT_TARGET = 18.0; SDKROOT = iphoneos; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; }; name = Release; };
+		CC982C4F58FE5F6D2B2680C2 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = Daytrace/Resources/Daytrace.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Daytrace/Resources/Info.plist; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = dev.nisesimadao.Daytrace; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		06B6A15813AE62FDCFE74422 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = Daytrace/Resources/Daytrace.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Daytrace/Resources/Info.plist; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = dev.nisesimadao.Daytrace; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+		A39F4EA2C585763103886C2C /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 18.0; PRODUCT_BUNDLE_IDENTIFIER = dev.nisesimadao.DaytraceTests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Daytrace.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Daytrace"; BUNDLE_LOADER = "$(TEST_HOST)"; }; name = Debug; };
+		B570061E7D3C2C486722CCA4 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 18.0; PRODUCT_BUNDLE_IDENTIFIER = dev.nisesimadao.DaytraceTests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 1; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Daytrace.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Daytrace"; BUNDLE_LOADER = "$(TEST_HOST)"; }; name = Release; };
+		AABBCCDDEEFF001122334431 /* Widget Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = DaytraceWidget/DaytraceWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = DaytraceWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 18.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = dev.nisesimadao.Daytrace.Widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
+		AABBCCDDEEFF001122334432 /* Widget Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = DaytraceWidget/DaytraceWidget.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = DaytraceWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 18.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = dev.nisesimadao.Daytrace.Widget; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 6.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+
 		12D04D787E90C9B967248BFD = {isa = XCConfigurationList; buildConfigurations = (73BFC4993D558C2844970A56, 3C5BC6FE1E438E679FB7F74F); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		32995943DE67267A65D32CA9 = {isa = XCConfigurationList; buildConfigurations = (CC982C4F58FE5F6D2B2680C2, 06B6A15813AE62FDCFE74422); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		F722E0DC847BA009AE0DBB50 = {isa = XCConfigurationList; buildConfigurations = (A39F4EA2C585763103886C2C, B570061E7D3C2C486722CCA4); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		AABBCCDDEEFF001122334440 = {isa = XCConfigurationList; buildConfigurations = (AABBCCDDEEFF001122334431, AABBCCDDEEFF001122334432); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 	};
 	rootObject = 98F54143AB4E86B28C3AFEE0 /* Project object */;
 }

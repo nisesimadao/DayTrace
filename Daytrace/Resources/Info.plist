@@ -2,44 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDisplayName</key>
-    <string>DayTrace</string>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundleIdentifier</key>
-    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>$(PRODUCT_NAME)</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>LSRequiresIPhoneOS</key>
-    <true/>
-    <key>NSFaceIDUsageDescription</key>
-    <string>DayTraceの位置履歴と日記を保護するためにFace IDを使用します。</string>
-    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>アプリを閉じている間も訪れた場所を記録し、あとで一日を振り返れるようにします。</string>
-    <key>NSLocationWhenInUseUsageDescription</key>
-    <string>今いる場所を一日のTimelineに記録するために位置情報を使用します。</string>
-    <key>UIApplicationSceneManifest</key>
-    <dict>
-        <key>UIApplicationSupportsMultipleScenes</key>
-        <false/>
-    </dict>
-    <key>UILaunchScreen</key>
-    <dict/>
-    <key>UIBackgroundModes</key>
-    <array>
-        <string>location</string>
-    </array>
-    <key>UISupportedInterfaceOrientations</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-    </array>
+    <key>CFBundleDisplayName</key><string>DayTrace</string>
+    <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>NSHumanReadableCopyright</key><string>Copyright 2026 nisesimadao</string>
+    <key>CFBundleURLTypes</key>
+    <array><dict><key>CFBundleURLName</key><string>dev.nisesimadao.Daytrace</string><key>CFBundleURLSchemes</key><array><string>daytrace</string></array></dict></array>
+    <key>LSRequiresIPhoneOS</key><true/>
+    <key>NSFaceIDUsageDescription</key><string>DayTraceの位置履歴と日記を保護するためにFace IDを使用します。</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key><string>アプリを閉じている間も訪れた場所を記録し、あとで一日を振り返れるようにします。</string>
+    <key>NSLocationWhenInUseUsageDescription</key><string>今いる場所を一日のTimelineに記録するために位置情報を使用します。</string>
+    <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
+    <key>UILaunchScreen</key><dict/>
+    <key>UIBackgroundModes</key><array><string>location</string></array>
+    <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
 </dict>
 </plist>

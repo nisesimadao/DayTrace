@@ -29,6 +29,12 @@ struct AppShellView: View {
         .onReceive(NotificationCenter.default.publisher(for: .daytraceOpenToday)) { _ in
             selectedTab = .today
         }
+        .onOpenURL { url in
+            guard url.scheme == "daytrace" else { return }
+            if url.host == "today" {
+                selectedTab = .today
+            }
+        }
     }
 }
 

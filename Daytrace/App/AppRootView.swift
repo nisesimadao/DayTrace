@@ -45,6 +45,7 @@ struct AppRootView: View {
                 locationRecorder.attach(context: modelContext)
                 locationRecorder.configureIfNeeded()
                 try? await ReviewReminderService.refresh(in: modelContext)
+                WidgetSnapshotService.refresh(in: modelContext)
 
                 if appLockEnabled, scenePhase == .active {
                     authenticateIfNeeded()
@@ -52,13 +53,23 @@ struct AppRootView: View {
                     isUnlocked = true
                 }
             }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: ModelContext.didSave,
+                    object: modelContext
+                )
+            ) { _ in
+                WidgetSnapshotService.refresh(in: modelContext)
+            }
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .active:
+                    WidgetSnapshotService.refresh(in: modelContext)
                     if appLockEnabled, !isUnlocked {
                         authenticateIfNeeded()
                     }
                 case .inactive, .background:
+                    WidgetSnapshotService.refresh(in: modelContext)
                     if appLockEnabled, !isAuthenticating {
                         isUnlocked = false
                     }
