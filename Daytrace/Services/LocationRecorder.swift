@@ -398,7 +398,9 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         switch authorizationStatus {
         case .notDetermined, .denied, .restricted:
             health = .needsPermission
-        case .authorizedAlways, .authorizedWhenInUse:
+        case .authorizedWhenInUse:
+            health = .unavailable("「常に許可」にすると、アプリを閉じている間も訪問や移動を記録できます")
+        case .authorizedAlways:
             if accuracyAuthorization == .reducedAccuracy {
                 health = .limitedAccuracy
             } else if let lastEvidenceAt, now.timeIntervalSince(lastEvidenceAt) > 6 * 60 * 60 {
