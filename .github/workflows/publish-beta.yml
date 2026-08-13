@@ -5,7 +5,7 @@ on:
     branches:
       - work/release-publish
     paths:
-      - .release-trigger
+      - '.release-trigger*'
 
 permissions:
   contents: write
