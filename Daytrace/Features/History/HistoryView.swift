@@ -402,6 +402,7 @@ struct HistoricalDayDetailView: View {
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
 
     @State private var selectedEpisodeID: UUID?
+    @State private var stayEditSelection: HistoricalStayEditSelection?
 
     private var suppressedEpisodeIDs: Set<UUID> {
         TimelineVisibility.suppressedEpisodeIDs(from: assertions)
@@ -487,8 +488,11 @@ struct HistoricalDayDetailView: View {
                         episodes: dayEpisodes,
                         selectedEpisodeID: $selectedEpisodeID,
                         lastEvidenceAt: nil,
-                        allowsEditing: false,
-                        onEdit: { _ in },
+                        allowsEditing: true,
+                        allowsSuppression: false,
+                        onEdit: { episode in
+                            stayEditSelection = HistoricalStayEditSelection(episode: episode)
+                        },
                         onSuppress: { _ in }
                     )
                 }
@@ -504,7 +508,18 @@ struct HistoricalDayDetailView: View {
         }
         .navigationTitle("この日")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $stayEditSelection) { selection in
+            StayEditorSheet(
+                episode: selection.episode,
+                rebuildHistoricalTransitions: true
+            )
+        }
     }
+}
+
+private struct HistoricalStayEditSelection: Identifiable {
+    let episode: TimelineEpisode
+    var id: UUID { episode.id }
 }
 
 private struct HistoricalJournalEditor: View {
