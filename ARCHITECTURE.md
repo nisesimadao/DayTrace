@@ -141,7 +141,9 @@ Review reminders are local `UserNotifications`; there is no push backend.
 
 ## History and recall
 
-History has three entry paths into a recorded day:
+History remains one app tab but has two shallow modes: **日付** and **マップ**.
+
+Date mode has three entry paths into a recorded day:
 
 - Calendar day
 - Recent day row
@@ -150,6 +152,21 @@ History has three entry paths into a recorded day:
 Past-day detail reuses the day map and Timeline presentation, shows Moment Notes, and allows journal editing. Old Timeline editing remains disabled for the rebuild-window reason described above.
 
 History search currently matches visible Timeline title/subtitle text, Journal text, and Moment Notes. Results are grouped once by recorded `CalendarDay` and capped for UI rendering rather than rescanning the entire history per result row.
+
+### Personal Places map
+
+Map mode is a **learned-Place recall surface**, not a raw location map:
+
+- it renders `PlaceRecord` identities that have visible linked Stay episodes
+- raw `LocationEvidence` is never rendered as map dots
+- nearby unconfirmed Stays are never merged merely because coordinates are close
+- visible Stays are grouped once by `placeID` to derive per-Place visit count and most-recent visit
+- most-recent date is stored/displayed as the Stay's recorded-local `CalendarDay`, not reformatted through the phone's later current timezone
+- map pin and Place-row selection share one selected Place and camera focus state
+- `isPrivate` Place names are sanitized on this recall surface
+- the selected Place card can open **最後の記録**, reusing the same `HistoricalDayDetailView` used by calendar/search History rather than maintaining a second historical-detail implementation
+
+Truthful city/zoom aggregation is deferred until real usage produces enough learned Places to justify it. Future aggregation must preserve underlying Place identity and must not treat spatial proximity as proof that two Places are the same.
 
 ## Export
 
@@ -204,6 +221,7 @@ The cutoff tests exercise the same pure policy used by production Core Location 
 - Moment Notes
 - History search
 - historical day detail
+- personal learned-Places map with latest-record navigation
 - JSON / Markdown / GPX export
 - raw evidence retention cleanup
 - app lock + App Switcher privacy cover
