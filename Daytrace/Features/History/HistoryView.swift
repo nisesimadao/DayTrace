@@ -393,7 +393,7 @@ private struct SearchDayRow: View {
     }
 }
 
-private struct HistoricalDayDetailView: View {
+struct HistoricalDayDetailView: View {
     let day: CalendarDay
 
     @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
