@@ -27,6 +27,8 @@ struct SettingsView: View {
     @State private var isExportPresented = false
     @State private var exportErrorMessage: String?
     @State private var appLockErrorMessage: String?
+    @State private var privacyActionErrorMessage: String?
+    @State private var isHistoryDeletionConfirmationPresented = false
 
     private var suppressedCount: Int {
         TimelineVisibility.suppressedEpisodeIDs(from: assertions).count
@@ -141,6 +143,25 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                Section {
+                    Button("位置履歴をすべて削除…", role: .destructive) {
+                        isHistoryDeletionConfirmationPresented = true
+                    }
+                    .alert(
+                        "位置履歴をすべて削除しますか？",
+                        isPresented: $isHistoryDeletionConfirmationPresented
+                    ) {
+                        Button("位置履歴を削除", role: .destructive, action: deleteLocationHistory)
+                        Button("キャンセル", role: .cancel) { }
+                    } message: {
+                        Text("生の位置データ、Timeline、記憶した場所、位置修正履歴を削除します。自分で書いた日記と今メモは残ります。自動記録はそのまま続き、削除後の記録だけが新しく作られます。")
+                    }
+                } header: {
+                    Text("削除")
+                } footer: {
+                    Text("削除した位置履歴は元に戻せません。必要なら先にJSONまたはGPXを書き出してください。")
+                }
             }
             .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)
@@ -171,6 +192,17 @@ struct SettingsView: View {
             } message: {
                 Text(exportErrorMessage ?? "")
             }
+            .alert(
+                "操作できませんでした",
+                isPresented: Binding(
+                    get: { privacyActionErrorMessage != nil },
+                    set: { if !$0 { privacyActionErrorMessage = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) { privacyActionErrorMessage = nil }
+            } message: {
+                Text(privacyActionErrorMessage ?? "")
+            }
         }
     }
 
@@ -182,8 +214,14 @@ struct SettingsView: View {
                 recorder.requestWhenInUse()
             }
         case .authorizedWhenInUse:
-            Button("「常に許可」に変更") {
-                openSystemSettings()
+            if recorder.canRequestAlwaysInApp {
+                Button("閉じている間も記録する") {
+                    recorder.requestAlways()
+                }
+            } else {
+                Button("設定で「常に許可」に変更") {
+                    openSystemSettings()
+                }
             }
         case .denied:
             Button("位置情報をオンにする") {
@@ -231,12 +269,20 @@ struct SettingsView: View {
         }
     }
 
+    private func deleteLocationHistory() {
+        do {
+            try recorder.deleteLocationHistoryKeepingJournal()
+        } catch {
+            privacyActionErrorMessage = error.localizedDescription
+        }
+    }
+
     private func restoreAllSuppressed() {
         do {
             try TimelineEditingService().restoreAllSuppressed(in: modelContext)
             try TimelineEngine().rebuildRecentTimeline(in: modelContext)
         } catch {
-            // Keep the current UI state; the next successful rebuild will reconcile the timeline.
+            privacyActionErrorMessage = error.localizedDescription
         }
     }
 
