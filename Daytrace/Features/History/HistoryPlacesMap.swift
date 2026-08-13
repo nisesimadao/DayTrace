@@ -1,0 +1,254 @@
+import MapKit
+import SwiftUI
+
+enum HistoryMode: String, CaseIterable, Identifiable {
+    case days
+    case places
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .days: "日付"
+        case .places: "マップ"
+        }
+    }
+}
+
+struct HistoryPlacesMap: View {
+    let places: [PlaceRecord]
+    let episodes: [TimelineEpisode]
+
+    @State private var selectedPlaceID: UUID?
+    @State private var position: MapCameraPosition = .automatic
+
+    private var summaries: [HistoryPlaceSummary] {
+        places.compactMap { place in
+            let visits = episodes.filter {
+                $0.kind == .stay && $0.placeID == place.id
+            }
+            guard !visits.isEmpty else { return nil }
+
+            let latest = visits.max { $0.startDate < $1.startDate }
+            return HistoryPlaceSummary(
+                id: place.id,
+                displayName: place.isPrivate ? "非公開の場所" : place.name,
+                latitude: place.latitude,
+                longitude: place.longitude,
+                visitCount: visits.count,
+                latestVisitDate: latest?.startDate,
+                latestDay: latest.map(TimelineDayProjection.day(for:)),
+                isPrivate: place.isPrivate
+            )
+        }
+        .sorted { lhs, rhs in
+            switch (lhs.latestVisitDate, rhs.latestVisitDate) {
+            case let (left?, right?):
+                if left != right { return left > right }
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                break
+            }
+            return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
+        }
+    }
+
+    private var selectedSummary: HistoryPlaceSummary? {
+        guard let selectedPlaceID else { return nil }
+        return summaries.first { $0.id == selectedPlaceID }
+    }
+
+    var body: some View {
+        if summaries.isEmpty {
+            ContentUnavailableView {
+                Label("まだ覚えた場所がありません", systemImage: "mappin.and.ellipse")
+            } description: {
+                Text("滞在場所を確認して覚えさせると、ここに自分の場所の地図が育っていきます。")
+            }
+            .frame(maxWidth: .infinity, minHeight: 300)
+            .padding(.horizontal, DS.horizontalPadding)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.sectionSpacing) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("覚えた場所")
+                            .font(.title2.bold())
+                        Spacer()
+                        Text("\(summaries.count)か所")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Map(position: $position, interactionModes: [.pan, .zoom]) {
+                        ForEach(summaries) { summary in
+                            Annotation(
+                                summary.displayName,
+                                coordinate: summary.coordinate
+                            ) {
+                                Button {
+                                    select(summary)
+                                } label: {
+                                    HistoryPlaceMarker(isSelected: selectedPlaceID == summary.id)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("\(summary.displayName)を選択")
+                            }
+                        }
+                    }
+                    .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+                    .frame(height: 340)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
+                            .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
+                    }
+                    .sensoryFeedback(.selection, trigger: selectedPlaceID)
+
+                    if let selectedSummary {
+                        SelectedHistoryPlaceCard(summary: selectedSummary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("場所")
+                            .font(.headline)
+                            .padding(.bottom, 2)
+
+                        ForEach(summaries) { summary in
+                            if let latestDay = summary.latestDay {
+                                NavigationLink(value: latestDay) {
+                                    HistoryPlaceRow(summary: summary)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                HistoryPlaceRow(summary: summary)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, DS.horizontalPadding)
+                .padding(.bottom, 40)
+            }
+        }
+    }
+
+    private func select(_ summary: HistoryPlaceSummary) {
+        withAnimation(.snappy) {
+            selectedPlaceID = summary.id
+            position = .region(MKCoordinateRegion(
+                center: summary.coordinate,
+                latitudinalMeters: 1_400,
+                longitudinalMeters: 1_400
+            ))
+        }
+    }
+}
+
+private struct HistoryPlaceSummary: Identifiable {
+    let id: UUID
+    let displayName: String
+    let latitude: Double
+    let longitude: Double
+    let visitCount: Int
+    let latestVisitDate: Date?
+    let latestDay: CalendarDay?
+    let isPrivate: Bool
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
+    var visitSummary: String {
+        let countText = "\(visitCount)回"
+        guard let latestVisitDate else { return countText }
+        let date = latestVisitDate.formatted(
+            .dateTime.month().day().locale(Locale(identifier: "ja_JP"))
+        )
+        return "\(countText) · 最後 \(date)"
+    }
+}
+
+private struct HistoryPlaceMarker: View {
+    let isSelected: Bool
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(.systemBackground))
+                .frame(width: isSelected ? 36 : 30, height: isSelected ? 36 : 30)
+                .shadow(radius: 3, y: 1)
+
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: isSelected ? 19 : 15, height: isSelected ? 19 : 15)
+        }
+    }
+}
+
+private struct SelectedHistoryPlaceCard: View {
+    let summary: HistoryPlaceSummary
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: summary.isPrivate ? "lock.fill" : "mappin.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(summary.displayName)
+                    .font(.headline)
+                Text(summary.visitSummary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if let latestDay = summary.latestDay {
+                NavigationLink(value: latestDay) {
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .accessibilityLabel("最後に訪れた日を見る")
+            }
+        }
+        .padding(14)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
+        )
+    }
+}
+
+private struct HistoryPlaceRow: View {
+    let summary: HistoryPlaceSummary
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Image(systemName: summary.isPrivate ? "lock.circle" : "mappin.circle")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(summary.displayName)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text(summary.visitSummary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if summary.latestDay != nil {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+    }
+}
