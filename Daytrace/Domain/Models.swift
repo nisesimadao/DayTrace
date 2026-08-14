@@ -52,6 +52,7 @@ final class VisitEvidence {
     var longitude: Double
     var horizontalAccuracy: Double
     var timeZoneIdentifier: String
+    var sourceRaw: String = EvidenceSource.visit.rawValue
 
     init(
         id: UUID = UUID(),
@@ -61,7 +62,8 @@ final class VisitEvidence {
         latitude: Double,
         longitude: Double,
         horizontalAccuracy: Double,
-        timeZoneIdentifier: String
+        timeZoneIdentifier: String,
+        source: EvidenceSource = .visit
     ) {
         self.id = id
         self.arrivalDate = arrivalDate
@@ -71,6 +73,12 @@ final class VisitEvidence {
         self.longitude = longitude
         self.horizontalAccuracy = horizontalAccuracy
         self.timeZoneIdentifier = timeZoneIdentifier
+        self.sourceRaw = source.rawValue
+    }
+
+    var source: EvidenceSource {
+        get { EvidenceSource(rawValue: sourceRaw) ?? .visit }
+        set { sourceRaw = newValue.rawValue }
     }
 }
 
@@ -253,6 +261,7 @@ enum EvidenceSource: String, Codable, Hashable, Sendable {
     case standardLocation
     case significantChange
     case visit
+    case inferredStop
     case userAdded
     case imported
 }

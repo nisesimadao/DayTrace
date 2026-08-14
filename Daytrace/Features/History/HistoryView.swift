@@ -775,7 +775,25 @@ private struct HistoricalJournalEditor: View {
     @State private var bodyText = ""
     @State private var isSaveErrorPresented = false
     @State private var saveErrorMessage = ""
+    @State private var savedBodyText: String?
+    @State private var notePendingDeletion: MomentNote?
     @FocusState private var isFocused: Bool
+
+    private var trimmedBodyText: String {
+        bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var persistedBodyText: String {
+        savedBodyText ?? existingJournal?.body.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var canSaveJournal: Bool {
+        existingJournal != nil || !trimmedBodyText.isEmpty
+    }
+
+    private var hasUnsavedJournalChanges: Bool {
+        trimmedBodyText != persistedBodyText
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -793,13 +811,7 @@ private struct HistoricalJournalEditor: View {
 
                     ForEach(notes) { note in
                         HistoricalMomentNoteRow(note: note) {
-                            do {
-                                modelContext.delete(note)
-                                try modelContext.save()
-                            } catch {
-                                saveErrorMessage = error.localizedDescription
-                                isSaveErrorPresented = true
-                            }
+                            notePendingDeletion = note
                         }
                     }
                 }
@@ -822,15 +834,40 @@ private struct HistoricalJournalEditor: View {
 
             HStack {
                 Spacer()
-                if existingJournal != nil || !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !hasUnsavedJournalChanges && !persistedBodyText.isEmpty {
+                    Label("保存済み", systemImage: "checkmark.circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if canSaveJournal {
                     Button("保存", action: save)
                         .bold()
                         .buttonStyle(.daytraceGlassProminent)
+                        .disabled(!hasUnsavedJournalChanges)
                 }
             }
         }
         .onAppear {
             bodyText = existingJournal?.body ?? ""
+            savedBodyText = existingJournal?.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        .confirmationDialog(
+            "今メモを削除しますか？",
+            isPresented: Binding(
+                get: { notePendingDeletion != nil },
+                set: { if !$0 { notePendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("削除", role: .destructive) {
+                guard let note = notePendingDeletion else { return }
+                notePendingDeletion = nil
+                delete(note)
+            }
+            Button("キャンセル", role: .cancel) {
+                notePendingDeletion = nil
+            }
         }
         .alert("日記を保存できません", isPresented: $isSaveErrorPresented) { } message: {
             Text(saveErrorMessage)
@@ -845,7 +882,18 @@ private struct HistoricalJournalEditor: View {
                 existingJournal: existingJournal,
                 in: modelContext
             )
+            savedBodyText = trimmedBodyText
             isFocused = false
+        } catch {
+            saveErrorMessage = error.localizedDescription
+            isSaveErrorPresented = true
+        }
+    }
+
+    private func delete(_ note: MomentNote) {
+        do {
+            modelContext.delete(note)
+            try modelContext.save()
         } catch {
             saveErrorMessage = error.localizedDescription
             isSaveErrorPresented = true

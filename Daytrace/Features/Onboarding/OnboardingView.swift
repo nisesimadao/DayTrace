@@ -7,6 +7,7 @@ struct OnboardingView: View {
     @Environment(LocationRecorder.self) private var recorder
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = 0
+    @State private var didRequestAlwaysAuthorization = false
 
     var body: some View {
         ZStack {
@@ -53,7 +54,12 @@ struct OnboardingView: View {
         case 0: "始める"
         case 1:
             recorder.authorizationStatus == .notDetermined ? "この場所を見る" : "次へ"
-        default: "閉じている間も記録する"
+        default:
+            recorder.authorizationStatus == .authorizedWhenInUse
+                && recorder.canRequestAlwaysInApp
+                && !didRequestAlwaysAuthorization
+                    ? "閉じている間も記録する"
+                    : "続ける"
         }
     }
 
@@ -71,10 +77,14 @@ struct OnboardingView: View {
                 withAnimation(reduceMotion ? nil : .snappy) { page = 2 }
             }
         default:
-            if recorder.authorizationStatus == .authorizedWhenInUse {
+            if recorder.authorizationStatus == .authorizedWhenInUse
+                && recorder.canRequestAlwaysInApp
+                && !didRequestAlwaysAuthorization {
+                didRequestAlwaysAuthorization = true
                 recorder.requestAlways()
+            } else {
+                onComplete()
             }
-            onComplete()
         }
     }
 
@@ -110,13 +120,57 @@ private struct OnboardingLocationPage: View {
 }
 
 private struct OnboardingBackgroundPage: View {
+    @Environment(LocationRecorder.self) private var recorder
+
     var body: some View {
-        OnboardingPage(
-            symbol: "clock.arrow.circlepath",
-            eyebrow: "自動記録",
-            title: "開かなくても、\n一日は続いています。",
-            message: "「常に許可」にすると、アプリを閉じている間も訪問や移動を記録できます。あとからいつでも変更できます。"
-        )
+        VStack(alignment: .leading, spacing: 24) {
+            Spacer()
+
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 42, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("自動記録")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .tracking(1.2)
+
+                Text("開かなくても、\n一日は続いています。")
+                    .font(.largeTitle.bold())
+                    .fontDesign(.rounded)
+
+                Text("「常に許可」にすると、アプリを閉じている間も訪問や移動を記録できます。あとからいつでも変更できます。")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(4)
+            }
+
+            Label(statusText, systemImage: statusSymbol)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+
+            Spacer()
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 36)
+    }
+
+    private var statusText: String {
+        switch recorder.authorizationStatus {
+        case .authorizedAlways: "閉じている間も記録できます"
+        case .authorizedWhenInUse: "今はアプリを開いている間だけ記録します"
+        case .denied: "位置情報がオフです。あとで設定から変更できます"
+        case .restricted: "この端末では位置情報の変更が制限されています"
+        default: "許可状態を確認しています"
+        }
+    }
+
+    private var statusSymbol: String {
+        recorder.authorizationStatus == .authorizedAlways ? "checkmark.circle.fill" : "info.circle"
     }
 }
 

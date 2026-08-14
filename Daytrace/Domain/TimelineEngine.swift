@@ -4,11 +4,30 @@ import SwiftData
 
 @MainActor
 struct TimelineEngine {
-    static let sourceVersion = 5
+    static let sourceVersion = 6
     private static let maximumPlaceResolutionAccuracy: CLLocationAccuracy = 250
+    private static let inferredStopMinimumSampleCount = 3
+    private static let inferredStopMaximumSampleGap: TimeInterval = 12 * 60
+    private static let inferredStopMaximumAverageSpeed: CLLocationSpeed = 2.2
 
-    func rebuildRecentTimeline(in context: ModelContext, now: Date = .now) throws {
+    func rebuildRecentTimeline(
+        in context: ModelContext,
+        now: Date = .now,
+        trackingSensitivity: TrackingSensitivity = .current
+    ) throws {
         let horizon = now.addingTimeInterval(-60 * 60 * 48)
+
+        let locationDescriptor = FetchDescriptor<LocationEvidence>(
+            predicate: #Predicate { $0.timestamp >= horizon },
+            sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
+        )
+        let locations = try context.fetch(locationDescriptor)
+        try reconcileInferredStops(
+            from: locations,
+            horizon: horizon,
+            trackingSensitivity: trackingSensitivity,
+            in: context
+        )
 
         let allVisits = try context.fetch(FetchDescriptor<VisitEvidence>())
         let visits = allVisits
@@ -17,12 +36,6 @@ struct TimelineEngine {
                 return arrival >= horizon || (visit.departureDate ?? .distantFuture) >= horizon
             }
             .sorted { visitStart($0) < visitStart($1) }
-
-        let locationDescriptor = FetchDescriptor<LocationEvidence>(
-            predicate: #Predicate { $0.timestamp >= horizon },
-            sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
-        )
-        let locations = try context.fetch(locationDescriptor)
 
         let existingEpisodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
         let assertions = try context.fetch(FetchDescriptor<UserAssertion>()).filter { $0.isActive }
@@ -63,8 +76,8 @@ struct TimelineEngine {
         for visit in visits {
             guard let arrival = visit.arrivalDate else { continue }
             let resolvedPlace = nearestPlace(to: visit, in: context)
-            let inferredTitle = resolvedPlace?.name ?? "未設定の場所"
-            let inferredSubtitle = resolvedPlace == nil ? "場所を確認" : nil
+            let inferredTitle = resolvedPlace?.name ?? title(for: visit)
+            let inferredSubtitle = subtitle(for: visit, resolvedPlace: resolvedPlace)
             let confidence = inferredConfidence(for: visit, resolvedPlace: resolvedPlace)
 
             if let episode = stayByVisitID[visit.id] {
@@ -262,6 +275,210 @@ struct TimelineEngine {
         ))
     }
 
+    private func reconcileInferredStops(
+        from locations: [LocationEvidence],
+        horizon: Date,
+        trackingSensitivity: TrackingSensitivity,
+        in context: ModelContext
+    ) throws {
+        guard let minimumDuration = trackingSensitivity.inferredStopMinimumDuration else {
+            try deleteInferredVisits(since: horizon, in: context)
+            return
+        }
+
+        let candidates = inferredStopCandidates(
+            from: locations,
+            minimumDuration: minimumDuration,
+            radius: trackingSensitivity.inferredStopRadius,
+            maximumAccuracy: trackingSensitivity.inferredStopMaximumAccuracy
+        )
+
+        let existingVisits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        let realVisits = existingVisits.filter { $0.source != .inferredStop }
+        let inferredVisits = existingVisits.filter {
+            $0.source == .inferredStop
+                && (($0.arrivalDate ?? $0.observedAt) >= horizon
+                    || ($0.departureDate ?? .distantFuture) >= horizon)
+        }
+
+        var matchedVisitIDs = Set<UUID>()
+        for candidate in candidates where !overlapsRealVisit(candidate, realVisits: realVisits) {
+            if let match = matchingInferredVisit(for: candidate, in: inferredVisits, excluding: matchedVisitIDs) {
+                match.arrivalDate = candidate.arrival
+                match.departureDate = candidate.departure
+                match.observedAt = candidate.observedAt
+                match.latitude = candidate.latitude
+                match.longitude = candidate.longitude
+                match.horizontalAccuracy = candidate.horizontalAccuracy
+                match.timeZoneIdentifier = candidate.timeZoneIdentifier
+                match.source = .inferredStop
+                matchedVisitIDs.insert(match.id)
+            } else {
+                context.insert(VisitEvidence(
+                    arrivalDate: candidate.arrival,
+                    departureDate: candidate.departure,
+                    observedAt: candidate.observedAt,
+                    latitude: candidate.latitude,
+                    longitude: candidate.longitude,
+                    horizontalAccuracy: candidate.horizontalAccuracy,
+                    timeZoneIdentifier: candidate.timeZoneIdentifier,
+                    source: .inferredStop
+                ))
+            }
+        }
+
+        for visit in inferredVisits where !matchedVisitIDs.contains(visit.id) {
+            context.delete(visit)
+        }
+    }
+
+    private func deleteInferredVisits(since horizon: Date, in context: ModelContext) throws {
+        let visits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        for visit in visits where visit.source == .inferredStop {
+            let evidenceDate = visit.departureDate ?? visit.arrivalDate ?? visit.observedAt
+            if evidenceDate >= horizon {
+                context.delete(visit)
+            }
+        }
+    }
+
+    private struct InferredStopCandidate {
+        var arrival: Date
+        var departure: Date
+        var observedAt: Date
+        var latitude: Double
+        var longitude: Double
+        var horizontalAccuracy: Double
+        var timeZoneIdentifier: String
+    }
+
+    private func inferredStopCandidates(
+        from locations: [LocationEvidence],
+        minimumDuration: TimeInterval,
+        radius: CLLocationDistance,
+        maximumAccuracy: CLLocationAccuracy
+    ) -> [InferredStopCandidate] {
+        let usableLocations = locations
+            .filter {
+                $0.horizontalAccuracy >= 0
+                    && $0.horizontalAccuracy <= maximumAccuracy
+                    && ($0.source == .standardLocation || $0.source == .significantChange)
+            }
+            .sorted { $0.timestamp < $1.timestamp }
+
+        var candidates: [InferredStopCandidate] = []
+        var cluster: [LocationEvidence] = []
+
+        func finishCluster() {
+            guard let candidate = candidate(from: cluster, minimumDuration: minimumDuration, radius: radius) else {
+                return
+            }
+            candidates.append(candidate)
+        }
+
+        for location in usableLocations {
+            guard let previous = cluster.last else {
+                cluster = [location]
+                continue
+            }
+
+            let gap = location.timestamp.timeIntervalSince(previous.timestamp)
+            let center = centroid(of: cluster)
+            let distance = CLLocation(latitude: location.latitude, longitude: location.longitude)
+                .distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
+
+            if gap <= Self.inferredStopMaximumSampleGap && distance <= radius {
+                cluster.append(location)
+            } else {
+                finishCluster()
+                cluster = [location]
+            }
+        }
+
+        finishCluster()
+        return candidates
+    }
+
+    private func candidate(
+        from cluster: [LocationEvidence],
+        minimumDuration: TimeInterval,
+        radius: CLLocationDistance
+    ) -> InferredStopCandidate? {
+        guard cluster.count >= Self.inferredStopMinimumSampleCount,
+              let first = cluster.first,
+              let last = cluster.last else {
+            return nil
+        }
+
+        let duration = last.timestamp.timeIntervalSince(first.timestamp)
+        guard duration >= minimumDuration else { return nil }
+
+        let center = centroid(of: cluster)
+        let centerLocation = CLLocation(latitude: center.latitude, longitude: center.longitude)
+        let maximumDistance = cluster
+            .map { CLLocation(latitude: $0.latitude, longitude: $0.longitude).distance(from: centerLocation) }
+            .max() ?? 0
+        guard maximumDistance <= radius else { return nil }
+
+        let speeds = cluster.map(\.speed).filter { $0 >= 0 }
+        if !speeds.isEmpty {
+            let averageSpeed = speeds.reduce(0, +) / Double(speeds.count)
+            guard averageSpeed <= Self.inferredStopMaximumAverageSpeed else { return nil }
+        }
+
+        return InferredStopCandidate(
+            arrival: first.timestamp,
+            departure: last.timestamp,
+            observedAt: last.timestamp,
+            latitude: center.latitude,
+            longitude: center.longitude,
+            horizontalAccuracy: min(cluster.map(\.horizontalAccuracy).max() ?? 100, radius),
+            timeZoneIdentifier: first.timeZoneIdentifier
+        )
+    }
+
+    private func centroid(of locations: [LocationEvidence]) -> (latitude: Double, longitude: Double) {
+        guard !locations.isEmpty else { return (0, 0) }
+        let latitude = locations.map(\.latitude).reduce(0, +) / Double(locations.count)
+        let longitude = locations.map(\.longitude).reduce(0, +) / Double(locations.count)
+        return (latitude, longitude)
+    }
+
+    private func overlapsRealVisit(_ candidate: InferredStopCandidate, realVisits: [VisitEvidence]) -> Bool {
+        let candidateLocation = CLLocation(latitude: candidate.latitude, longitude: candidate.longitude)
+        return realVisits.contains { visit in
+            guard let arrival = visit.arrivalDate else { return false }
+            let departure = visit.departureDate ?? candidate.departure
+            guard arrival <= candidate.departure && departure >= candidate.arrival else { return false }
+
+            let visitLocation = CLLocation(latitude: visit.latitude, longitude: visit.longitude)
+            let allowance = max(250, max(visit.horizontalAccuracy, candidate.horizontalAccuracy))
+            return candidateLocation.distance(from: visitLocation) <= allowance
+        }
+    }
+
+    private func matchingInferredVisit(
+        for candidate: InferredStopCandidate,
+        in visits: [VisitEvidence],
+        excluding matchedVisitIDs: Set<UUID>
+    ) -> VisitEvidence? {
+        let candidateLocation = CLLocation(latitude: candidate.latitude, longitude: candidate.longitude)
+        return visits
+            .filter { !matchedVisitIDs.contains($0.id) }
+            .compactMap { visit -> (VisitEvidence, Double)? in
+                guard let arrival = visit.arrivalDate else { return nil }
+                let arrivalDelta = abs(arrival.timeIntervalSince(candidate.arrival))
+                guard arrivalDelta <= 5 * 60 else { return nil }
+
+                let visitLocation = CLLocation(latitude: visit.latitude, longitude: visit.longitude)
+                let distance = candidateLocation.distance(from: visitLocation)
+                guard distance <= max(250, candidate.horizontalAccuracy) else { return nil }
+                return (visit, arrivalDelta + distance / 100)
+            }
+            .min { $0.1 < $1.1 }?
+            .0
+    }
+
     private func nearestPlace(to visit: VisitEvidence, in context: ModelContext) -> PlaceRecord? {
         guard visit.horizontalAccuracy >= 0,
               visit.horizontalAccuracy <= Self.maximumPlaceResolutionAccuracy else {
@@ -287,6 +504,10 @@ struct TimelineEngine {
         for visit: VisitEvidence,
         resolvedPlace: PlaceRecord?
     ) -> EpisodeConfidence {
+        if visit.source == .inferredStop {
+            return .low
+        }
+
         guard visit.horizontalAccuracy >= 0 else { return .low }
 
         if resolvedPlace != nil {
@@ -297,5 +518,27 @@ struct TimelineEngine {
 
     private func visitStart(_ visit: VisitEvidence) -> Date {
         visit.arrivalDate ?? visit.departureDate ?? visit.observedAt
+    }
+
+    private func title(for visit: VisitEvidence) -> String {
+        switch visit.source {
+        case .inferredStop:
+            "推定した停車"
+        default:
+            "未設定の場所"
+        }
+    }
+
+    private func subtitle(for visit: VisitEvidence, resolvedPlace: PlaceRecord?) -> String? {
+        if resolvedPlace != nil {
+            return visit.source == .inferredStop ? "位置サンプルから推定" : nil
+        }
+
+        return switch visit.source {
+        case .inferredStop:
+            "位置サンプルから推定・確認してください"
+        default:
+            "場所を確認"
+        }
     }
 }

@@ -130,8 +130,9 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         manager.startMonitoringSignificantLocationChanges()
         isRecording = true
 
-        if UserDefaults.standard.bool(forKey: "detailedRoutesEnabled") {
-            startDetailedUpdates()
+        let sensitivity = TrackingSensitivity.current
+        if sensitivity.usesContinuousUpdates {
+            startDetailedUpdates(for: sensitivity)
         } else {
             stopDetailedUpdates()
             requestForegroundSnapshot()
@@ -141,21 +142,35 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
     }
 
     func setDetailedRoutesEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: "detailedRoutesEnabled")
+        TrackingSensitivity.persist(enabled ? .highPrecision : .lowPower)
         guard isRecording else { return }
-        enabled ? startDetailedUpdates() : stopDetailedUpdates()
+        enabled ? startDetailedUpdates(for: TrackingSensitivity.current) : stopDetailedUpdates()
     }
 
-    func applyRetentionPolicy(days: Int) {
-        UserDefaults.standard.set(days, forKey: "rawEvidenceRetentionDays")
-        guard let context = modelContext else { return }
+    func setTrackingSensitivity(_ sensitivity: TrackingSensitivity) {
+        TrackingSensitivity.persist(sensitivity)
+        guard isRecording else { return }
+        if sensitivity.usesContinuousUpdates {
+            startDetailedUpdates(for: sensitivity)
+        } else {
+            stopDetailedUpdates()
+            requestForegroundSnapshot()
+        }
+    }
+
+    func applyRetentionPolicy(days: Int) throws {
+        guard let context = modelContext else {
+            UserDefaults.standard.set(days, forKey: "rawEvidenceRetentionDays")
+            return
+        }
 
         let retention = RawEvidenceRetentionService()
-        try? retention.backfillLegacyVisits(in: context)
-        try? retention.prune(
+        try retention.backfillLegacyVisits(in: context)
+        try retention.prune(
             in: context,
             retentionDays: days
         )
+        UserDefaults.standard.set(days, forKey: "rawEvidenceRetentionDays")
         lastEvidenceAt = nil
         restoreLastEvidenceDateIfNeeded()
         refreshHealth()
@@ -310,14 +325,14 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         UserDefaults.standard.set(true, forKey: Self.alwaysAuthorizationRequestedKey)
     }
 
-    private func startDetailedUpdates() {
-        guard !standardUpdatesActive else { return }
-        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-        manager.distanceFilter = 25
+    private func startDetailedUpdates(for sensitivity: TrackingSensitivity) {
+        manager.desiredAccuracy = sensitivity.desiredAccuracy
+        manager.distanceFilter = sensitivity.distanceFilter
         if authorizationStatus == .authorizedAlways {
             manager.allowsBackgroundLocationUpdates = true
             manager.showsBackgroundLocationIndicator = false
         }
+        guard !standardUpdatesActive else { return }
         manager.startUpdatingLocation()
         standardUpdatesActive = true
     }

@@ -1,9 +1,11 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct TodayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.openURL) private var openURL
     @Environment(LocationRecorder.self) private var recorder
     @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
@@ -93,7 +95,10 @@ struct TodayView: View {
                 LocationContextHeader()
 
                 if recorder.health != .healthy {
-                    TrackingHealthBanner(health: recorder.health)
+                    TrackingHealthBanner(
+                        health: recorder.health,
+                        action: trackingHealthAction
+                    )
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
@@ -210,6 +215,54 @@ struct TodayView: View {
         isMapExpanded = true
     }
 
+    private var trackingHealthAction: TrackingHealthBanner.Action? {
+        switch recorder.health {
+        case .needsPermission:
+            switch recorder.authorizationStatus {
+            case .notDetermined:
+                return .init(title: "位置情報を許可", systemImage: "location") {
+                    recorder.requestWhenInUse()
+                }
+            case .authorizedWhenInUse:
+                if recorder.canRequestAlwaysInApp {
+                    return .init(title: "常に許可へ進む", systemImage: "location.fill") {
+                        recorder.requestAlways()
+                    }
+                }
+                return settingsAction(title: "設定で常に許可", systemImage: "gearshape")
+            case .denied:
+                return systemSettingsAction(title: "位置情報をオン", systemImage: "gearshape")
+            default:
+                return settingsAction(title: "記録状態を見る", systemImage: "gearshape")
+            }
+        case .limitedAccuracy:
+            return systemSettingsAction(title: "正確な位置情報をオン", systemImage: "scope")
+        case .stale:
+            return .init(title: "記録を再確認", systemImage: "arrow.clockwise") {
+                recorder.requestForegroundSnapshot()
+            }
+        case .unavailable:
+            return systemSettingsAction(title: "設定を開く", systemImage: "gearshape")
+        case .notConfigured:
+            return settingsAction(title: "記録状態を見る", systemImage: "gearshape")
+        case .healthy:
+            return nil
+        }
+    }
+
+    private func settingsAction(title: String, systemImage: String) -> TrackingHealthBanner.Action {
+        .init(title: title, systemImage: systemImage) {
+            isSettingsPresented = true
+        }
+    }
+
+    private func systemSettingsAction(title: String, systemImage: String) -> TrackingHealthBanner.Action {
+        .init(title: title, systemImage: systemImage) {
+            guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+            openURL(url)
+        }
+    }
+
     private func restoreSuppressed(_ episodeID: UUID) {
         do {
             try TimelineEditingService().setSuppressed(
@@ -318,27 +371,46 @@ private struct EmptyTimelineState: View {
 }
 
 private struct TrackingHealthBanner: View {
+    struct Action {
+        let title: String
+        let systemImage: String
+        let handler: () -> Void
+    }
+
     let health: LocationRecorder.Health
+    let action: Action?
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol)
-                .font(.title3)
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(detail)
-                    .font(.caption)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .font(.title3)
                     .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
             }
 
-            Spacer()
+            if let action {
+                Button {
+                    action.handler()
+                } label: {
+                    Label(action.title, systemImage: action.systemImage)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.daytraceGlassProminent)
+            }
         }
         .padding(DS.cardPadding)
         .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
     private var symbol: String {
@@ -363,10 +435,10 @@ private struct TrackingHealthBanner: View {
 
     private var detail: String {
         switch health {
-        case .limitedAccuracy: "大まかな訪問履歴として記録します"
+        case .limitedAccuracy: "正確な位置情報をオンにすると、滞在場所を修正しやすくなります"
         case .stale: "最後に確認できた時刻以降は、推測せず空白として扱います"
         case .unavailable(let reason): reason
-        case .needsPermission: "日記はそのまま使えます"
+        case .needsPermission: "位置情報を許可すると、今日のタイムラインに現在地が出ます"
         default: "位置情報の状態を確認しています"
         }
     }
@@ -471,7 +543,7 @@ struct StayEditorSheet: View {
                         Label("この場所は高い確度で記録されています", systemImage: "checkmark.circle")
                             .foregroundStyle(.secondary)
                     } else {
-                        Toggle("この場所で合っている", isOn: $shouldConfirmLocation)
+                        Toggle("この場所として覚える", isOn: $shouldConfirmLocation)
                             .disabled(trimmedTitle.isEmpty)
                     }
                 }
@@ -545,10 +617,13 @@ struct StayEditorSheet: View {
         longitude: Double,
         suggestedTitle: String?
     ) {
+        let hadCustomTitle = hasEditedPlaceName
         selectedLatitude = latitude
         selectedLongitude = longitude
         if let suggestedTitle {
             title = suggestedTitle
+        } else if !hadCustomTitle {
+            title = ""
         }
         shouldConfirmLocation = false
     }

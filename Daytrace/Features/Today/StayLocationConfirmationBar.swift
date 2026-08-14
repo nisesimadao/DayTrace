@@ -16,7 +16,7 @@ struct StayLocationConfirmationBar: View {
             .lineLimit(2)
 
             Button(action: confirm) {
-                Label("この場所を使う", systemImage: "checkmark")
+                Label("この位置を反映", systemImage: "checkmark")
                     .bold()
                     .frame(maxWidth: .infinity)
             }

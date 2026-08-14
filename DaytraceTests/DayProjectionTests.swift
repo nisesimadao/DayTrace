@@ -695,6 +695,76 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testBalancedTrackingInfersTwentyMinuteStopFromLocationCluster() throws {
+        let context = try makeContext()
+        context.insert(locationEvidence(at: baseTime, latitude: 34.660_00, longitude: 133.920_00, speed: 0.4))
+        context.insert(locationEvidence(
+            at: baseTime.addingTimeInterval(10 * 60),
+            latitude: 34.660_12,
+            longitude: 133.920_10,
+            speed: 0.2
+        ))
+        context.insert(locationEvidence(
+            at: baseTime.addingTimeInterval(20 * 60),
+            latitude: 34.660_05,
+            longitude: 133.920_08,
+            speed: 0.1
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(
+            in: context,
+            now: baseTime.addingTimeInterval(60 * 60),
+            trackingSensitivity: .balanced
+        )
+
+        let inferredVisit = try XCTUnwrap(try context.fetch(FetchDescriptor<VisitEvidence>())
+            .first { $0.source == .inferredStop })
+        let stay = try stay(for: inferredVisit.id, in: context)
+        XCTAssertEqual(stay.title, "推定した停車")
+        XCTAssertEqual(stay.confidence, .low)
+        XCTAssertEqual(stay.startDate, baseTime)
+        XCTAssertEqual(stay.endDate, baseTime.addingTimeInterval(20 * 60))
+    }
+
+    @MainActor
+    func testInferredStopDoesNotDuplicateRealVisit() throws {
+        let context = try makeContext()
+        insertVisit(
+            arrival: baseTime,
+            departure: baseTime.addingTimeInterval(30 * 60),
+            observedAt: baseTime.addingTimeInterval(30 * 60),
+            in: context
+        )
+        context.insert(locationEvidence(at: baseTime, latitude: 34.660_00, longitude: 133.920_00, speed: 0))
+        context.insert(locationEvidence(
+            at: baseTime.addingTimeInterval(10 * 60),
+            latitude: 34.660_08,
+            longitude: 133.920_04,
+            speed: 0
+        ))
+        context.insert(locationEvidence(
+            at: baseTime.addingTimeInterval(20 * 60),
+            latitude: 34.660_12,
+            longitude: 133.920_05,
+            speed: 0
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(
+            in: context,
+            now: baseTime.addingTimeInterval(60 * 60),
+            trackingSensitivity: .balanced
+        )
+
+        let visits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        let stays = try context.fetch(FetchDescriptor<TimelineEpisode>()).filter { $0.kind == .stay }
+        XCTAssertEqual(visits.filter { $0.source == .inferredStop }.count, 0)
+        XCTAssertEqual(stays.count, 1)
+        XCTAssertEqual(stays.first?.title, "未設定の場所")
+    }
+
+    @MainActor
     func testFreshNearbyEvidenceProjectsCurrentLocationSinceClusterStart() throws {
         let now = baseTime.addingTimeInterval(10 * 60)
         let evidence = [
@@ -867,7 +937,7 @@ final class DayProjectionTests: XCTestCase {
             endDate: (start ?? baseTime).addingTimeInterval(60 * 60),
             title: title,
             confidence: .high,
-            sourceVersion: 5,
+            sourceVersion: 6,
             timeZoneIdentifier: zone
         )
         context.insert(episode)

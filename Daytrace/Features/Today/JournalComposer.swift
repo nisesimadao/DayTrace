@@ -17,6 +17,8 @@ struct JournalComposer: View {
     @State private var isMomentNotePresented = false
     @State private var isSaveErrorPresented = false
     @State private var saveErrorMessage = ""
+    @State private var savedBodyText: String?
+    @State private var notePendingDeletion: MomentNote?
     @FocusState private var isFocused: Bool
 
     private var targetDay: CalendarDay {
@@ -28,6 +30,22 @@ struct JournalComposer: View {
             let zone = TimelineDayProjection.timeZone(identifier: note.timeZoneIdentifier)
             return CalendarDay(containing: note.timestamp, timeZone: zone) == targetDay
         }
+    }
+
+    private var trimmedBodyText: String {
+        bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var persistedBodyText: String {
+        savedBodyText ?? existingJournal?.body.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var canSaveJournal: Bool {
+        existingJournal != nil || !trimmedBodyText.isEmpty
+    }
+
+    private var hasUnsavedJournalChanges: Bool {
+        trimmedBodyText != persistedBodyText
     }
 
     var body: some View {
@@ -48,7 +66,9 @@ struct JournalComposer: View {
                         .foregroundStyle(.secondary)
 
                     ForEach(dayNotes) { note in
-                        MomentNoteRow(note: note, onDelete: { delete(note) })
+                        MomentNoteRow(note: note) {
+                            notePendingDeletion = note
+                        }
                     }
                 }
             }
@@ -86,10 +106,17 @@ struct JournalComposer: View {
 
                 Spacer()
 
-                if existingJournal != nil || !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !hasUnsavedJournalChanges && !persistedBodyText.isEmpty {
+                    Label("保存済み", systemImage: "checkmark.circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if canSaveJournal {
                     Button("保存", action: save)
                         .bold()
                         .buttonStyle(.daytraceGlassProminent)
+                        .disabled(!hasUnsavedJournalChanges)
                 }
             }
 
@@ -99,9 +126,27 @@ struct JournalComposer: View {
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
         .onAppear {
             bodyText = existingJournal?.body ?? ""
+            savedBodyText = existingJournal?.body.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         .sheet(isPresented: $isMomentNotePresented) {
             MomentNoteComposerSheet()
+        }
+        .confirmationDialog(
+            "今メモを削除しますか？",
+            isPresented: Binding(
+                get: { notePendingDeletion != nil },
+                set: { if !$0 { notePendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("削除", role: .destructive) {
+                guard let note = notePendingDeletion else { return }
+                notePendingDeletion = nil
+                delete(note)
+            }
+            Button("キャンセル", role: .cancel) {
+                notePendingDeletion = nil
+            }
         }
         .alert("日記を保存できません", isPresented: $isSaveErrorPresented) { } message: {
             Text(saveErrorMessage)
@@ -122,6 +167,7 @@ struct JournalComposer: View {
                 existingJournal: existingJournal,
                 in: modelContext
             )
+            savedBodyText = trimmedBodyText
             isFocused = false
         } catch {
             saveErrorMessage = error.localizedDescription
