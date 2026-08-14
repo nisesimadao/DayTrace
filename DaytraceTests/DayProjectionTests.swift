@@ -695,6 +695,99 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testDayRouteProjectionKeepsMovingSamplesAsRouteVertices() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let secondStay = timelineStay(
+            start: baseTime.addingTimeInterval(90 * 60),
+            end: baseTime.addingTimeInterval(120 * 60),
+            latitude: 34.700,
+            longitude: 133.960
+        )
+        let movingSample = locationEvidence(
+            at: baseTime.addingTimeInterval(75 * 60),
+            latitude: 34.680,
+            longitude: 133.940,
+            speed: 12,
+            source: .standardLocation
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [secondStay, firstStay],
+            locationEvidence: [movingSample]
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .movementSample, .stay])
+        XCTAssertEqual(points.map(\.latitude), [34.660, 34.680, 34.700])
+        XCTAssertEqual(points.map(\.longitude), [133.920, 133.940, 133.960])
+    }
+
+    @MainActor
+    func testDayRouteProjectionDoesNotTreatStaySamplesAsRouteVertices() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let secondStay = timelineStay(
+            start: baseTime.addingTimeInterval(90 * 60),
+            end: baseTime.addingTimeInterval(120 * 60),
+            latitude: 34.700,
+            longitude: 133.960
+        )
+        let staySample = locationEvidence(
+            at: baseTime.addingTimeInterval(30 * 60),
+            latitude: 34.661,
+            longitude: 133.921
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [firstStay, secondStay],
+            locationEvidence: [staySample]
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .stay])
+    }
+
+    @MainActor
+    func testDayRouteProjectionFiltersLowQualityMovingSamples() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let secondStay = timelineStay(
+            start: baseTime.addingTimeInterval(90 * 60),
+            end: baseTime.addingTimeInterval(120 * 60),
+            latitude: 34.700,
+            longitude: 133.960
+        )
+        let inaccurateSample = LocationEvidence(
+            timestamp: baseTime.addingTimeInterval(75 * 60),
+            latitude: 34.680,
+            longitude: 133.940,
+            horizontalAccuracy: 1_500,
+            speed: 12,
+            course: 90,
+            source: .standardLocation,
+            timeZoneIdentifier: zone
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [firstStay, secondStay],
+            locationEvidence: [inaccurateSample]
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .stay])
+    }
+
+    @MainActor
     func testBalancedTrackingInfersTwentyMinuteStopFromLocationCluster() throws {
         let context = try makeContext()
         context.insert(locationEvidence(at: baseTime, latitude: 34.660_00, longitude: 133.920_00, speed: 0.4))
@@ -942,6 +1035,25 @@ final class DayProjectionTests: XCTestCase {
         )
         context.insert(episode)
         return episode
+    }
+
+    private func timelineStay(
+        start: Date,
+        end: Date?,
+        latitude: Double,
+        longitude: Double
+    ) -> TimelineEpisode {
+        TimelineEpisode(
+            kind: .stay,
+            startDate: start,
+            endDate: end,
+            title: "滞在",
+            latitude: latitude,
+            longitude: longitude,
+            confidence: .high,
+            sourceVersion: 6,
+            timeZoneIdentifier: zone
+        )
     }
 
     @MainActor

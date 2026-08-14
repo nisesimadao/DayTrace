@@ -105,6 +105,7 @@ struct TodayView: View {
                 if hasMapContent {
                     DayMap(
                         episodes: todayEpisodes,
+                        routeLocations: locationEvidence,
                         currentLocation: provisionalCurrentLocation,
                         selectedEpisodeID: $selectedEpisodeID,
                         onExpand: showExpandedMap
@@ -156,6 +157,7 @@ struct TodayView: View {
             ExpandedDayMapView(
                 title: "今日の足あと",
                 episodes: todayEpisodes,
+                routeLocations: locationEvidence,
                 currentLocation: provisionalCurrentLocation,
                 selectedEpisodeID: $selectedEpisodeID
             )

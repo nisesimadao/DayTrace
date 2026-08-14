@@ -630,6 +630,7 @@ struct HistoricalDayDetailView: View {
     @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
     @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
+    @Query(sort: \LocationEvidence.timestamp) private var locationEvidence: [LocationEvidence]
 
     @State private var selectedEpisodeID: UUID?
     @State private var isMapExpanded = false
@@ -702,6 +703,7 @@ struct HistoricalDayDetailView: View {
                 if hasLocatableStay {
                     DayMap(
                         episodes: dayEpisodes,
+                        routeLocations: dayRouteLocations,
                         selectedEpisodeID: $selectedEpisodeID,
                         onExpand: showExpandedMap
                     )
@@ -750,6 +752,7 @@ struct HistoricalDayDetailView: View {
             ExpandedDayMapView(
                 title: "この日の足あと",
                 episodes: dayEpisodes,
+                routeLocations: dayRouteLocations,
                 currentLocation: nil,
                 selectedEpisodeID: $selectedEpisodeID
             )
@@ -758,6 +761,10 @@ struct HistoricalDayDetailView: View {
 
     private func showExpandedMap() {
         isMapExpanded = true
+    }
+
+    private var dayRouteLocations: [LocationEvidence] {
+        locationEvidence.filter { $0.timestamp >= interval.start && $0.timestamp < interval.end }
     }
 }
 

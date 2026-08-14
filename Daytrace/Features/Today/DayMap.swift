@@ -3,17 +3,20 @@ import SwiftUI
 
 struct DayMap: View {
     let episodes: [TimelineEpisode]
+    let routeLocations: [LocationEvidence]
     let currentLocation: CurrentLocationContext?
     @Binding var selectedEpisodeID: UUID?
     let onExpand: (() -> Void)?
 
     init(
         episodes: [TimelineEpisode],
+        routeLocations: [LocationEvidence] = [],
         currentLocation: CurrentLocationContext? = nil,
         selectedEpisodeID: Binding<UUID?>,
         onExpand: (() -> Void)? = nil
     ) {
         self.episodes = episodes
+        self.routeLocations = routeLocations
         self.currentLocation = currentLocation
         _selectedEpisodeID = selectedEpisodeID
         self.onExpand = onExpand
@@ -26,10 +29,18 @@ struct DayMap: View {
     }
 
     private var routeDescription: String {
+        let sampleCount = DayRouteProjection.movementSampleCount(
+            episodes: episodes,
+            locationEvidence: routeLocations,
+            currentLocation: currentLocation
+        )
+        if sampleCount > 0 {
+            return "移動中\(sampleCount)点を含む"
+        }
         if pointCount >= 2 {
-            "\(pointCount)地点を時系列の直線で表示"
+            return "\(pointCount)地点を時系列の直線で表示"
         } else {
-            "記録された地点を表示"
+            return "記録された地点を表示"
         }
     }
 
@@ -51,6 +62,7 @@ struct DayMap: View {
             ZStack(alignment: .bottomTrailing) {
                 DayMapCanvas(
                     episodes: episodes,
+                    routeLocations: routeLocations,
                     currentLocation: currentLocation,
                     selectedEpisodeID: $selectedEpisodeID,
                     interactionModes: onExpand == nil ? [.pan, .zoom] : []
@@ -92,6 +104,7 @@ struct ExpandedDayMapView: View {
 
     let title: String
     let episodes: [TimelineEpisode]
+    let routeLocations: [LocationEvidence]
     let currentLocation: CurrentLocationContext?
     @Binding var selectedEpisodeID: UUID?
 
@@ -121,6 +134,7 @@ struct ExpandedDayMapView: View {
         NavigationStack {
             DayMapCanvas(
                 episodes: episodes,
+                routeLocations: routeLocations,
                 currentLocation: currentLocation,
                 selectedEpisodeID: $selectedEpisodeID,
                 interactionModes: [.pan, .zoom]
@@ -188,6 +202,7 @@ private struct DayMapCanvas: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let episodes: [TimelineEpisode]
+    let routeLocations: [LocationEvidence]
     let currentLocation: CurrentLocationContext?
     @Binding var selectedEpisodeID: UUID?
     let interactionModes: MapInteractionModes
@@ -201,20 +216,19 @@ private struct DayMapCanvas: View {
     }
 
     private var routeCoordinates: [CLLocationCoordinate2D] {
-        var coordinates = locatableEpisodes.compactMap { episode -> CLLocationCoordinate2D? in
-            guard let latitude = episode.latitude, let longitude = episode.longitude else {
-                return nil
-            }
-            return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-        }
+        routePoints.map(\.coordinate)
+    }
 
-        if let currentLocation {
-            coordinates.append(CLLocationCoordinate2D(
-                latitude: currentLocation.latitude,
-                longitude: currentLocation.longitude
-            ))
-        }
-        return coordinates
+    private var routePoints: [DayRoutePoint] {
+        DayRouteProjection.points(
+            episodes: episodes,
+            locationEvidence: routeLocations,
+            currentLocation: currentLocation
+        )
+    }
+
+    private var movementSamplePoints: [DayRoutePoint] {
+        routePoints.filter { $0.kind == .movementSample }
     }
 
     var body: some View {
@@ -231,6 +245,19 @@ private struct DayMapCanvas: View {
                         Color.accentColor.opacity(0.72),
                         style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
                     )
+            }
+
+            ForEach(movementSamplePoints) { point in
+                Annotation("移動中の記録", coordinate: point.coordinate) {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.58))
+                        .frame(width: 7, height: 7)
+                        .overlay {
+                            Circle()
+                                .stroke(Color(.systemBackground).opacity(0.85), lineWidth: 1)
+                        }
+                        .accessibilityLabel("移動中の位置")
+                }
             }
 
             ForEach(locatableEpisodes.indices, id: \.self) { index in
