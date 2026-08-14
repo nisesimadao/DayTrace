@@ -100,6 +100,17 @@ struct ExpandedDayMapView: View {
         return episodes.first { $0.id == selectedEpisodeID }
     }
 
+    private var selectedPointNumber: Int? {
+        guard let selectedEpisodeID else { return nil }
+        let locatableEpisodes = episodes
+            .filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
+            .sorted { $0.startDate < $1.startDate }
+        guard let index = locatableEpisodes.firstIndex(where: { $0.id == selectedEpisodeID }) else {
+            return nil
+        }
+        return index + 1
+    }
+
     private var locatablePointCount: Int {
         episodes.count {
             $0.kind == .stay && $0.latitude != nil && $0.longitude != nil
@@ -118,7 +129,8 @@ struct ExpandedDayMapView: View {
             .safeAreaInset(edge: .bottom) {
                 ExpandedMapStatusCard(
                     pointCount: locatablePointCount,
-                    selectedEpisode: selectedEpisode
+                    selectedEpisode: selectedEpisode,
+                    selectedPointNumber: selectedPointNumber
                 )
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 8)
@@ -137,17 +149,24 @@ struct ExpandedDayMapView: View {
 private struct ExpandedMapStatusCard: View {
     let pointCount: Int
     let selectedEpisode: TimelineEpisode?
+    let selectedPointNumber: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let selectedEpisode {
+                if let selectedPointNumber {
+                    Label("地図の\(selectedPointNumber)番", systemImage: "mappin.circle.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tint)
+                }
+
                 Text(selectedEpisode.title)
                     .font(.headline)
 
-                Text(
+                Text(TimelineFormatting.clock(
                     selectedEpisode.startDate,
-                    format: .dateTime.hour().minute()
-                )
+                    timeZoneIdentifier: selectedEpisode.timeZoneIdentifier
+                ))
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
             } else {
