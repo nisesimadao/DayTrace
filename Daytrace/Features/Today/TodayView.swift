@@ -1,5 +1,3 @@
-import CoreLocation
-import MapKit
 import SwiftData
 import SwiftUI
 
@@ -388,10 +386,8 @@ struct StayEditorSheet: View {
     @State private var endDate: Date
     @State private var isOngoing: Bool
     @State private var shouldConfirmLocation = false
+    @State private var isLocationEditorPresented = false
     @State private var saveErrorMessage: String?
-    @State private var isLookingUpPlace = false
-    @State private var placeLookupMessage: String?
-    @State private var didApplyPlaceSuggestion = false
     @State private var selectedLatitude: Double
     @State private var selectedLongitude: Double
 
@@ -453,10 +449,6 @@ struct StayEditorSheet: View {
         )
     }
 
-    private var canLookUpPlace: Bool {
-        hasEditableCoordinate && !isLookingUpPlace
-    }
-
     var body: some View {
         NavigationStack {
             Form {
@@ -467,33 +459,12 @@ struct StayEditorSheet: View {
                     if let originalLatitude = episode.latitude,
                        let originalLongitude = episode.longitude {
                         StayLocationPicker(
-                            latitude: $selectedLatitude,
-                            longitude: $selectedLongitude,
+                            latitude: selectedLatitude,
+                            longitude: selectedLongitude,
                             originalLatitude: originalLatitude,
-                            originalLongitude: originalLongitude
+                            originalLongitude: originalLongitude,
+                            onEdit: showLocationEditor
                         )
-                    }
-
-                    Button(action: lookUpPlaceSuggestion) {
-                        if isLookingUpPlace {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                Text("Apple Mapsで候補を検索中")
-                            }
-                        } else {
-                            Label("Apple Mapsで候補を探す", systemImage: "map")
-                        }
-                    }
-                    .disabled(!canLookUpPlace)
-
-                    if didApplyPlaceSuggestion {
-                        Text("Apple Mapsの候補です。内容を確認し、「この場所で合っている」をオンにすると次回から覚えます。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if let placeLookupMessage {
-                        Text(placeLookupMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
 
                     if episode.confidence == .high && !hasEditedPlaceName && !hasEditedCoordinate {
@@ -523,6 +494,18 @@ struct StayEditorSheet: View {
                     }
                 }
             }
+            .navigationDestination(isPresented: $isLocationEditorPresented) {
+                if let originalLatitude = episode.latitude,
+                   let originalLongitude = episode.longitude {
+                    StayLocationEditor(
+                        latitude: selectedLatitude,
+                        longitude: selectedLongitude,
+                        originalLatitude: originalLatitude,
+                        originalLongitude: originalLongitude,
+                        onConfirm: applyLocationSelection
+                    )
+                }
+            }
             .navigationTitle("滞在を修正")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -531,7 +514,7 @@ struct StayEditorSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: save)
-                        .disabled(intervalValidationError != nil || isLookingUpPlace)
+                        .disabled(intervalValidationError != nil)
                 }
             }
         }
@@ -549,29 +532,21 @@ struct StayEditorSheet: View {
         }
     }
 
-    private func lookUpPlaceSuggestion() {
-        guard hasEditableCoordinate else { return }
-        isLookingUpPlace = true
-        placeLookupMessage = nil
-        didApplyPlaceSuggestion = false
+    private func showLocationEditor() {
+        isLocationEditorPresented = true
+    }
 
-        Task {
-            do {
-                if let suggestion = try await PlaceSuggestionLookup.suggestion(
-                    latitude: selectedLatitude,
-                    longitude: selectedLongitude
-                ) {
-                    title = suggestion
-                    shouldConfirmLocation = false
-                    didApplyPlaceSuggestion = true
-                } else {
-                    placeLookupMessage = "この位置では場所の候補を見つけられませんでした。"
-                }
-            } catch {
-                placeLookupMessage = "場所の候補を取得できませんでした。通信状態を確認してもう一度試してください。"
-            }
-            isLookingUpPlace = false
+    private func applyLocationSelection(
+        latitude: Double,
+        longitude: Double,
+        suggestedTitle: String?
+    ) {
+        selectedLatitude = latitude
+        selectedLongitude = longitude
+        if let suggestedTitle {
+            title = suggestedTitle
         }
+        shouldConfirmLocation = false
     }
 
     private func save() {
@@ -614,78 +589,5 @@ struct StayEditorSheet: View {
         } catch {
             saveErrorMessage = error.localizedDescription
         }
-    }
-}
-
-@MainActor
-private enum PlaceSuggestionLookup {
-    static func suggestion(latitude: Double, longitude: Double) async throws -> String? {
-        let location = CLLocation(latitude: latitude, longitude: longitude)
-
-        if #available(iOS 26.0, *) {
-            return try await mapKitSuggestion(for: location)
-        } else {
-            return try await legacySuggestion(for: location)
-        }
-    }
-
-    @available(iOS 26.0, *)
-    private static func mapKitSuggestion(for location: CLLocation) async throws -> String? {
-        guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
-        request.preferredLocale = .current
-
-        return try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<String?, Error>) in
-            request.getMapItems { [request] items, error in
-                _ = request
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                let suggestion = items?
-                    .lazy
-                    .compactMap(preferredLabel(for:))
-                    .first
-                continuation.resume(returning: suggestion)
-            }
-        }
-    }
-
-    @available(iOS, introduced: 18.0, obsoleted: 26.0)
-    private static func legacySuggestion(for location: CLLocation) async throws -> String? {
-        let placemarks = try await CLGeocoder().reverseGeocodeLocation(
-            location,
-            preferredLocale: .current
-        )
-
-        for placemark in placemarks {
-            let candidates = [
-                placemark.areasOfInterest?.first,
-                placemark.name,
-                placemark.locality,
-            ]
-            if let value = candidates.compactMap(cleaned).first {
-                return value
-            }
-        }
-        return nil
-    }
-
-    @available(iOS 26.0, *)
-    private static func preferredLabel(for item: MKMapItem) -> String? {
-        let candidates = [
-            item.name,
-            item.address?.shortAddress,
-            item.addressRepresentations?.fullAddress(includingRegion: false, singleLine: true),
-            item.address?.fullAddress,
-        ]
-        return candidates.compactMap(cleaned).first
-    }
-
-    private static func cleaned(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }
