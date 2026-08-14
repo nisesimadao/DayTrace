@@ -510,11 +510,15 @@ struct StayEditorSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("キャンセル") { dismiss() }
+                    if !isLocationEditorPresented {
+                        Button("キャンセル") { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存", action: save)
-                        .disabled(intervalValidationError != nil)
+                    if !isLocationEditorPresented {
+                        Button("保存", action: save)
+                            .disabled(intervalValidationError != nil)
+                    }
                 }
             }
         }
