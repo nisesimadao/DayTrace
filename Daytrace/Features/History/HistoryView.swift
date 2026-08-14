@@ -60,32 +60,53 @@ struct HistoryView: View {
 }
 
 private struct HistoryPlacesLink: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
         NavigationLink(value: HistoryDestination.places) {
-            HStack(spacing: 14) {
-                Image(systemName: "map.fill")
-                    .font(.title2)
-                    .foregroundStyle(.tint)
-                    .frame(width: 44, height: 44)
-                    .background(Color.accentColor.opacity(0.12), in: .circle)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 14) {
+                        mapIcon
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("場所から振り返る")
-                        .font(.headline)
-                    Text("覚えた場所を地図で見て、訪れた日を開く")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        Text("場所から振り返る")
+                            .font(.headline)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text("覚えた場所を地図で見て、訪れた日を開く")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        Label("場所の地図を開く", systemImage: "arrow.right")
+                            .font(.headline)
+                            .foregroundStyle(.tint)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.accentColor.opacity(0.12), in: .capsule)
+                    }
+                } else {
+                    HStack(spacing: 14) {
+                        mapIcon
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("場所から振り返る")
+                                .font(.headline)
+                            Text("覚えた場所を地図で見て、訪れた日を開く")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+
+                        Spacer(minLength: 4)
+
+                        Text("開く")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tint)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 7)
+                            .background(Color.accentColor.opacity(0.12), in: .capsule)
+                    }
                 }
-
-                Spacer(minLength: 4)
-
-                Text("開く")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tint)
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 7)
-                    .background(Color.accentColor.opacity(0.12), in: .capsule)
             }
             .padding(DS.cardPadding)
             .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
@@ -95,6 +116,14 @@ private struct HistoryPlacesLink: View {
         .hoverEffect(.highlight)
         .padding(.top, 8)
         .accessibilityHint("覚えた場所の地図を開きます")
+    }
+
+    private var mapIcon: some View {
+        Image(systemName: "map.fill")
+            .font(.title2)
+            .foregroundStyle(.tint)
+            .frame(width: 44, height: 44)
+            .background(Color.accentColor.opacity(0.12), in: .circle)
     }
 }
 
@@ -143,6 +172,7 @@ private struct HistoryCalendarCard: View {
 
 private struct MonthHeader: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let displayedMonth: Date
     let setDisplayedMonth: (Date) -> Void
 
@@ -157,21 +187,46 @@ private struct MonthHeader: View {
         }
     }
 
+    @ViewBuilder
     private var controls: some View {
-        HStack {
-            Button("前月", systemImage: "chevron.left") { shiftMonth(-1) }
-                .font(.caption.weight(.semibold))
-                .buttonStyle(.daytraceGlass)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 12) {
+                monthTitle
 
-            Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
-                .font(.title2.bold())
-                .frame(maxWidth: .infinity)
-                .contentTransition(.numericText())
-
-            Button("次月", systemImage: "chevron.right") { shiftMonth(1) }
-                .font(.caption.weight(.semibold))
-                .buttonStyle(.daytraceGlass)
+                HStack(spacing: 12) {
+                    previousMonthButton
+                        .frame(maxWidth: .infinity)
+                    nextMonthButton
+                        .frame(maxWidth: .infinity)
+                }
+            }
+        } else {
+            HStack {
+                previousMonthButton
+                monthTitle
+                    .frame(maxWidth: .infinity)
+                nextMonthButton
+            }
         }
+    }
+
+    private var monthTitle: some View {
+        Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
+            .font(.title2.bold())
+            .multilineTextAlignment(.center)
+            .contentTransition(.numericText())
+    }
+
+    private var previousMonthButton: some View {
+        Button("前月", systemImage: "chevron.left") { shiftMonth(-1) }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.daytraceGlass)
+    }
+
+    private var nextMonthButton: some View {
+        Button("次月", systemImage: "chevron.right") { shiftMonth(1) }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.daytraceGlass)
     }
 
     private func shiftMonth(_ amount: Int) {

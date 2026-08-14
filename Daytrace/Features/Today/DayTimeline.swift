@@ -76,63 +76,22 @@ private struct TimelineEpisodeRow: View {
         allowsEditing && episode.kind == .stay
     }
 
+    private var canShowOnMap: Bool {
+        episode.kind == .stay && episode.latitude != nil && episode.longitude != nil
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Button(action: onSelect) {
-                HStack(alignment: .top, spacing: 14) {
-                    Text(TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 43, alignment: .trailing)
-                        .padding(.top, 1)
-
-                    TimelineRail(
-                        episode: episode,
-                        drawsTopLine: drawsTopLine,
-                        drawsBottomLine: drawsBottomLine
-                    )
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(episode.title)
-                                .font(episode.kind == .stay ? .body.weight(.semibold) : .subheadline.weight(.medium))
-
-                            if episode.confidence == .low && episode.kind == .stay {
-                                Text("?")
-                                    .font(.caption.bold())
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        if let subtitle = episode.subtitle, !subtitle.isEmpty {
-                            Text(subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if let duration = TimelineFormatting.duration(from: episode.startDate, to: episode.endDate) {
-                            Text(duration)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if episode.kind == .stay {
-                            Text(openEndedStatus)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if episode.kind == .stay {
-                            Label(isSelected ? "地図で表示中" : "地図で見る", systemImage: isSelected ? "checkmark.circle.fill" : "map")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.tint)
-                                .padding(.top, 3)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, episode.kind == .stay ? 30 : 22)
+            if canShowOnMap {
+                Button(action: onSelect) {
+                    episodeContent
+                        .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.daytraceRowLink)
+                .accessibilityHint("地図をこの場所へ移動します")
+            } else {
+                episodeContent
             }
-            .buttonStyle(.daytraceRowLink)
 
             if canEdit {
                 Button("修正", systemImage: "slider.horizontal.3", action: onEdit)
@@ -152,6 +111,60 @@ private struct TimelineEpisodeRow: View {
                     Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
                 }
             }
+        }
+    }
+
+    private var episodeContent: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text(TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 43, alignment: .trailing)
+                .padding(.top, 1)
+
+            TimelineRail(
+                episode: episode,
+                drawsTopLine: drawsTopLine,
+                drawsBottomLine: drawsBottomLine
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(episode.title)
+                        .font(episode.kind == .stay ? .body.weight(.semibold) : .subheadline.weight(.medium))
+
+                    if episode.confidence == .low && episode.kind == .stay {
+                        Text("?")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let subtitle = episode.subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let duration = TimelineFormatting.duration(from: episode.startDate, to: episode.endDate) {
+                    Text(duration)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if episode.kind == .stay {
+                    Text(openEndedStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if canShowOnMap {
+                    Label(isSelected ? "地図で表示中" : "地図で見る", systemImage: isSelected ? "checkmark.circle.fill" : "map")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tint)
+                        .padding(.top, 3)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, episode.kind == .stay ? 30 : 22)
         }
     }
 
