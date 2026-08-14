@@ -5,6 +5,7 @@ import SwiftUI
 struct AppRootView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("appLockEnabled") private var appLockEnabled = false
@@ -95,7 +96,7 @@ struct AppRootView: View {
                     isAuthenticating = false
                 }
             }
-            .animation(.snappy(duration: 0.18), value: shouldCoverContent)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: shouldCoverContent)
     }
 
     @MainActor

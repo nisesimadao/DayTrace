@@ -34,7 +34,10 @@ struct AppShellView: View {
             }
             .daytraceModernTabBar()
             .overlay(alignment: .top) {
-                DaytraceDeviceTopBrand(topInset: geometry.safeAreaInsets.top)
+                DaytraceDeviceTopBrand(
+                    topInset: geometry.safeAreaInsets.top,
+                    availableWidth: geometry.size.width
+                )
             }
             .onReceive(NotificationCenter.default.publisher(for: .daytraceOpenToday)) { _ in
                 selectedTab = .today

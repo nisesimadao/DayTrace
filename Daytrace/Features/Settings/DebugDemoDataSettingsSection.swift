@@ -12,11 +12,10 @@ struct DebugDemoDataSettingsSection: View {
         Section {
             LabeledContent("デモデータ", value: isInstalled ? "追加済み" : "未追加")
 
-            Button("7日分のデモデータを追加", systemImage: "sparkles", action: install)
-                .disabled(isInstalled)
-
             if isInstalled {
                 Button("デモデータを削除", systemImage: "trash", role: .destructive, action: remove)
+            } else {
+                Button("7日分のデモデータを追加", systemImage: "sparkles", action: install)
             }
         } header: {
             Text("開発")

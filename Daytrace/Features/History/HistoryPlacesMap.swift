@@ -251,7 +251,7 @@ private struct SelectedHistoryPlaceCard: View {
             }
         }
         .padding(14)
-        .daytraceGlassSurface(cornerRadius: DS.contentCornerRadius, interactive: true)
+        .daytraceGlassSurface(cornerRadius: DS.contentCornerRadius)
     }
 }
 

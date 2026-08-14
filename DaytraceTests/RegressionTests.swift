@@ -21,8 +21,10 @@ final class RegressionTests: XCTestCase {
             latitude: 34.66,
             longitude: 133.92
         )
+        let userAssertion = UserAssertion(episodeID: UUID(), type: .rename)
         context.insert(userJournal)
         context.insert(userPlace)
+        context.insert(userAssertion)
         try context.save()
 
         let service = DebugDemoDataService()
@@ -33,6 +35,10 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<PlaceRecord>()).count, 4)
         XCTAssertEqual(try context.fetch(FetchDescriptor<TimelineEpisode>()).count, 8)
         XCTAssertEqual(try context.fetch(FetchDescriptor<MomentNote>()).count, 3)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<UserAssertion>()).count, 9)
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<TimelineEpisode>()).count, 8)
 
         try service.remove(in: context)
 
@@ -40,6 +46,7 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<PlaceRecord>()).map(\.id), [userPlace.id])
         XCTAssertTrue(try context.fetch(FetchDescriptor<TimelineEpisode>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<MomentNote>()).isEmpty)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<UserAssertion>()).map(\.id), [userAssertion.id])
     }
 #endif
 

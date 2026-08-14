@@ -19,6 +19,9 @@ struct DebugDemoDataService {
         static let notes = (1...3).map {
             UUID(uuidString: String(format: "D3000000-0000-4000-8000-%012d", $0))!
         }
+        static let assertions = (1...8).map {
+            UUID(uuidString: String(format: "D4000000-0000-4000-8000-%012d", $0))!
+        }
     }
 
     func isInstalled(in context: ModelContext) throws -> Bool {
@@ -69,6 +72,12 @@ struct DebugDemoDataService {
                 sourceVersion: 99,
                 timeZoneIdentifier: zone
             ))
+            context.insert(UserAssertion(
+                id: ID.assertions[index],
+                episodeID: ID.episodes[index],
+                type: .confirm,
+                createdAt: start
+            ))
         }
 
         let journalBodies = [
@@ -113,6 +122,7 @@ struct DebugDemoDataService {
         let episodeIDs = Set(ID.episodes)
         let journalIDs = Set(ID.journals)
         let noteIDs = Set(ID.notes)
+        let assertionIDs = Set(ID.assertions)
 
         try context.fetch(FetchDescriptor<PlaceRecord>())
             .filter { placeIDs.contains($0.id) }
@@ -125,6 +135,9 @@ struct DebugDemoDataService {
             .forEach { context.delete($0) }
         try context.fetch(FetchDescriptor<MomentNote>())
             .filter { noteIDs.contains($0.id) }
+            .forEach { context.delete($0) }
+        try context.fetch(FetchDescriptor<UserAssertion>())
+            .filter { assertionIDs.contains($0.id) }
             .forEach { context.delete($0) }
 
         try context.save()
