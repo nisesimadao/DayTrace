@@ -36,6 +36,7 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<TimelineEpisode>()).count, 8)
         XCTAssertEqual(try context.fetch(FetchDescriptor<MomentNote>()).count, 3)
         XCTAssertEqual(try context.fetch(FetchDescriptor<UserAssertion>()).count, 9)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<LocationEvidence>()).count, 2)
 
         try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime)
         XCTAssertEqual(try context.fetch(FetchDescriptor<TimelineEpisode>()).count, 8)
@@ -47,6 +48,7 @@ final class RegressionTests: XCTestCase {
         XCTAssertTrue(try context.fetch(FetchDescriptor<TimelineEpisode>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<MomentNote>()).isEmpty)
         XCTAssertEqual(try context.fetch(FetchDescriptor<UserAssertion>()).map(\.id), [userAssertion.id])
+        XCTAssertTrue(try context.fetch(FetchDescriptor<LocationEvidence>()).isEmpty)
     }
 #endif
 

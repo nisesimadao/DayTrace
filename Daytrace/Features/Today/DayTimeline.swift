@@ -6,6 +6,8 @@ struct DayTimeline: View {
     let episodes: [TimelineEpisode]
     @Binding var selectedEpisodeID: UUID?
     let lastEvidenceAt: Date?
+    let currentLocation: CurrentLocationContext?
+    let connectsToCurrentLocation: Bool
     let allowsEditing: Bool
     let allowsSuppression: Bool
     let onEdit: (TimelineEpisode) -> Void
@@ -15,6 +17,8 @@ struct DayTimeline: View {
         episodes: [TimelineEpisode],
         selectedEpisodeID: Binding<UUID?>,
         lastEvidenceAt: Date?,
+        currentLocation: CurrentLocationContext? = nil,
+        connectsToCurrentLocation: Bool = false,
         allowsEditing: Bool = true,
         allowsSuppression: Bool = true,
         onEdit: @escaping (TimelineEpisode) -> Void,
@@ -23,6 +27,8 @@ struct DayTimeline: View {
         self.episodes = episodes
         _selectedEpisodeID = selectedEpisodeID
         self.lastEvidenceAt = lastEvidenceAt
+        self.currentLocation = currentLocation
+        self.connectsToCurrentLocation = connectsToCurrentLocation
         self.allowsEditing = allowsEditing
         self.allowsSuppression = allowsSuppression
         self.onEdit = onEdit
@@ -36,8 +42,9 @@ struct DayTimeline: View {
                     episode: episode,
                     isSelected: selectedEpisodeID == episode.id,
                     drawsTopLine: index > 0,
-                    drawsBottomLine: index < episodes.count - 1,
+                    drawsBottomLine: index < episodes.count - 1 || connectsToCurrentLocation,
                     lastEvidenceAt: lastEvidenceAt,
+                    currentLocation: currentLocation,
                     allowsEditing: allowsEditing,
                     allowsSuppression: allowsSuppression,
                     onSelect: {
@@ -66,6 +73,7 @@ private struct TimelineEpisodeRow: View {
     let drawsTopLine: Bool
     let drawsBottomLine: Bool
     let lastEvidenceAt: Date?
+    let currentLocation: CurrentLocationContext?
     let allowsEditing: Bool
     let allowsSuppression: Bool
     let onSelect: () -> Void
@@ -169,12 +177,86 @@ private struct TimelineEpisodeRow: View {
     }
 
     private var openEndedStatus: String {
+        if let currentLocation {
+            return CurrentLocationProjection.matches(episode, currentLocation: currentLocation)
+                ? "現在"
+                : "終了時刻を確認"
+        }
         guard let lastEvidenceAt else { return "終了時刻を確認" }
         let age = Date.now.timeIntervalSince(lastEvidenceAt)
         if age <= 20 * 60 {
             return "現在"
         }
         return "最後に確認 \(TimelineFormatting.clock(lastEvidenceAt, timeZoneIdentifier: episode.timeZoneIdentifier))"
+    }
+}
+
+struct CurrentLocationTimelineRow: View {
+    let currentLocation: CurrentLocationContext
+    let placeName: String
+    let connectsFromPrevious: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text(TimelineFormatting.clock(
+                currentLocation.startDate,
+                timeZoneIdentifier: currentLocation.timeZoneIdentifier
+            ))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .frame(width: 43, alignment: .trailing)
+            .padding(.top, 1)
+
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(connectsFromPrevious ? Color.secondary.opacity(0.22) : .clear)
+                    .frame(width: DS.timelineLine, height: 8)
+
+                ZStack {
+                    Circle()
+                        .fill(.tint.opacity(0.16))
+                        .frame(width: 22, height: 22)
+
+                    Circle()
+                        .fill(.tint)
+                        .frame(width: DS.timelineDot, height: DS.timelineDot)
+                }
+
+                Rectangle()
+                    .fill(.clear)
+                    .frame(width: DS.timelineLine)
+            }
+            .frame(width: 20)
+            .frame(minHeight: 82)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 7) {
+                    Text(placeName)
+                        .font(.body.weight(.semibold))
+
+                    Text("いま")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.tint)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.tint.opacity(0.1), in: .capsule)
+                }
+
+                Text("少なくとも \(TimelineFormatting.clock(currentLocation.startDate, timeZoneIdentifier: currentLocation.timeZoneIdentifier)) から")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Label("滞在判定中", systemImage: "location.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tint)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 26)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "現在地、\(placeName)、少なくとも\(TimelineFormatting.clock(currentLocation.startDate, timeZoneIdentifier: currentLocation.timeZoneIdentifier))から、滞在判定中"
+        )
     }
 }
 

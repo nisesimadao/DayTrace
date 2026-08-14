@@ -10,6 +10,8 @@ struct TodayView: View {
     @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
+    @Query(sort: \LocationEvidence.timestamp) private var locationEvidence: [LocationEvidence]
+    @Query private var places: [PlaceRecord]
 
     @State private var selectedEpisodeID: UUID?
     @State private var isSettingsPresented: Bool
@@ -43,10 +45,30 @@ struct TodayView: View {
         }
     }
 
-    private var hasLocatableStay: Bool {
+    private var currentLocation: CurrentLocationContext? {
+        CurrentLocationProjection.project(
+            evidence: locationEvidence,
+            dayStart: day.start
+        )
+    }
+
+    private var provisionalCurrentLocation: CurrentLocationContext? {
+        guard let currentLocation else { return nil }
+        let alreadyRepresented = todayEpisodes.contains {
+            CurrentLocationProjection.matches($0, currentLocation: currentLocation)
+        }
+        return alreadyRepresented ? nil : currentLocation
+    }
+
+    private var currentLocationName: String {
+        guard let currentLocation = provisionalCurrentLocation else { return "現在地" }
+        return CurrentLocationProjection.placeName(for: currentLocation, places: places) ?? "現在地"
+    }
+
+    private var hasMapContent: Bool {
         todayEpisodes.contains { episode in
             episode.kind == .stay && episode.latitude != nil && episode.longitude != nil
-        }
+        } || provisionalCurrentLocation != nil
     }
 
     private var todayJournal: JournalEntry? {
@@ -70,26 +92,38 @@ struct TodayView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                if hasLocatableStay {
+                if hasMapContent {
                     DayMap(
                         episodes: todayEpisodes,
+                        currentLocation: provisionalCurrentLocation,
                         selectedEpisodeID: $selectedEpisodeID
                     )
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
 
-                if todayEpisodes.isEmpty {
+                if todayEpisodes.isEmpty && provisionalCurrentLocation == nil {
                     EmptyTimelineState()
-                } else {
+                } else if !todayEpisodes.isEmpty {
                     DayTimeline(
                         episodes: todayEpisodes,
                         selectedEpisodeID: $selectedEpisodeID,
-                        lastEvidenceAt: recorder.lastEvidenceAt,
+                        lastEvidenceAt: nil,
+                        currentLocation: currentLocation,
+                        connectsToCurrentLocation: provisionalCurrentLocation != nil,
                         onEdit: { episode in
                             stayEditSelection = StayEditSelection(episode: episode)
                         },
                         onSuppress: suppress
                     )
+                }
+
+                if let provisionalCurrentLocation {
+                    CurrentLocationTimelineRow(
+                        currentLocation: provisionalCurrentLocation,
+                        placeName: currentLocationName,
+                        connectsFromPrevious: !todayEpisodes.isEmpty
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
             .padding(.horizontal, DS.horizontalPadding)
@@ -97,7 +131,8 @@ struct TodayView: View {
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: recorder.health == .healthy)
-        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: hasLocatableStay)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: hasMapContent)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: provisionalCurrentLocation)
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isSettingsPresented) {
             SettingsView()
@@ -336,6 +371,8 @@ struct StayEditorSheet: View {
     @State private var isLookingUpPlace = false
     @State private var placeLookupMessage: String?
     @State private var didApplyPlaceSuggestion = false
+    @State private var selectedLatitude: Double
+    @State private var selectedLongitude: Double
 
     init(episode: TimelineEpisode, rebuildHistoricalTransitions: Bool = false) {
         self.episode = episode
@@ -344,6 +381,8 @@ struct StayEditorSheet: View {
         _startDate = State(initialValue: episode.startDate)
         _endDate = State(initialValue: episode.endDate ?? .now)
         _isOngoing = State(initialValue: episode.endDate == nil)
+        _selectedLatitude = State(initialValue: episode.latitude ?? 0)
+        _selectedLongitude = State(initialValue: episode.longitude ?? 0)
     }
 
     private var originalDisplayTitle: String {
@@ -358,10 +397,20 @@ struct StayEditorSheet: View {
         trimmedTitle != originalDisplayTitle
     }
 
+    private var hasEditableCoordinate: Bool {
+        episode.latitude != nil && episode.longitude != nil
+    }
+
+    private var hasEditedCoordinate: Bool {
+        guard let latitude = episode.latitude, let longitude = episode.longitude else { return false }
+        return abs(selectedLatitude - latitude) >= 0.000_001
+            || abs(selectedLongitude - longitude) >= 0.000_001
+    }
+
     private var shouldApplyConfirmation: Bool {
         shouldConfirmLocation
             && !trimmedTitle.isEmpty
-            && (episode.confidence != .high || hasEditedPlaceName)
+            && (episode.confidence != .high || hasEditedPlaceName || hasEditedCoordinate)
     }
 
     private var proposedEndDate: Date? {
@@ -384,7 +433,7 @@ struct StayEditorSheet: View {
     }
 
     private var canLookUpPlace: Bool {
-        episode.latitude != nil && episode.longitude != nil && !isLookingUpPlace
+        hasEditableCoordinate && !isLookingUpPlace
     }
 
     var body: some View {
@@ -393,6 +442,16 @@ struct StayEditorSheet: View {
                 Section("場所") {
                     TextField("場所の名前", text: $title)
                         .textInputAutocapitalization(.never)
+
+                    if let originalLatitude = episode.latitude,
+                       let originalLongitude = episode.longitude {
+                        StayLocationPicker(
+                            latitude: $selectedLatitude,
+                            longitude: $selectedLongitude,
+                            originalLatitude: originalLatitude,
+                            originalLongitude: originalLongitude
+                        )
+                    }
 
                     Button(action: lookUpPlaceSuggestion) {
                         if isLookingUpPlace {
@@ -416,7 +475,7 @@ struct StayEditorSheet: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    if episode.confidence == .high && !hasEditedPlaceName {
+                    if episode.confidence == .high && !hasEditedPlaceName && !hasEditedCoordinate {
                         Label("この場所は高い確度で記録されています", systemImage: "checkmark.circle")
                             .foregroundStyle(.secondary)
                     } else {
@@ -455,7 +514,7 @@ struct StayEditorSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .alert(
             "保存できません",
             isPresented: Binding(
@@ -470,7 +529,7 @@ struct StayEditorSheet: View {
     }
 
     private func lookUpPlaceSuggestion() {
-        guard let latitude = episode.latitude, let longitude = episode.longitude else { return }
+        guard hasEditableCoordinate else { return }
         isLookingUpPlace = true
         placeLookupMessage = nil
         didApplyPlaceSuggestion = false
@@ -478,8 +537,8 @@ struct StayEditorSheet: View {
         Task {
             do {
                 if let suggestion = try await PlaceSuggestionLookup.suggestion(
-                    latitude: latitude,
-                    longitude: longitude
+                    latitude: selectedLatitude,
+                    longitude: selectedLongitude
                 ) {
                     title = suggestion
                     shouldConfirmLocation = false
@@ -505,6 +564,8 @@ struct StayEditorSheet: View {
                 title: title,
                 startDate: startDate,
                 endDate: proposedEndDate,
+                latitude: hasEditableCoordinate ? selectedLatitude : nil,
+                longitude: hasEditableCoordinate ? selectedLongitude : nil,
                 confirmLocation: shouldApplyConfirmation,
                 in: modelContext
             )

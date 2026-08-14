@@ -5,7 +5,18 @@ struct DayMap: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let episodes: [TimelineEpisode]
+    let currentLocation: CurrentLocationContext?
     @Binding var selectedEpisodeID: UUID?
+
+    init(
+        episodes: [TimelineEpisode],
+        currentLocation: CurrentLocationContext? = nil,
+        selectedEpisodeID: Binding<UUID?>
+    ) {
+        self.episodes = episodes
+        self.currentLocation = currentLocation
+        _selectedEpisodeID = selectedEpisodeID
+    }
 
     @State private var position: MapCameraPosition = .automatic
 
@@ -36,6 +47,19 @@ struct DayMap: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(episode.title)を選択")
                     }
+                }
+            }
+
+            if let currentLocation {
+                Annotation(
+                    "現在地",
+                    coordinate: CLLocationCoordinate2D(
+                        latitude: currentLocation.latitude,
+                        longitude: currentLocation.longitude
+                    )
+                ) {
+                    CurrentLocationMapMarker()
+                        .accessibilityLabel("現在地")
                 }
             }
         }
@@ -70,6 +94,26 @@ struct DayMap: View {
         withAnimation(reduceMotion ? nil : .snappy) {
             position = .region(region)
         }
+    }
+}
+
+private struct CurrentLocationMapMarker: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(.tint.opacity(0.16))
+                .frame(width: 40, height: 40)
+
+            Circle()
+                .fill(Color(.systemBackground))
+                .frame(width: 25, height: 25)
+                .shadow(radius: 3, y: 1)
+
+            Circle()
+                .fill(.tint)
+                .frame(width: 15, height: 15)
+        }
+        .frame(width: 44, height: 44)
     }
 }
 

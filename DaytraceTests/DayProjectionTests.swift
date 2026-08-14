@@ -695,6 +695,100 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testFreshNearbyEvidenceProjectsCurrentLocationSinceClusterStart() throws {
+        let now = baseTime.addingTimeInterval(10 * 60)
+        let evidence = [
+            locationEvidence(at: baseTime, latitude: 34.660_00, longitude: 133.920_00),
+            locationEvidence(
+                at: baseTime.addingTimeInterval(8 * 60),
+                latitude: 34.660_15,
+                longitude: 133.920_10,
+                source: .significantChange
+            ),
+        ]
+
+        let current = try XCTUnwrap(CurrentLocationProjection.project(
+            evidence: evidence,
+            now: now,
+            dayStart: baseTime.addingTimeInterval(-60 * 60)
+        ))
+
+        XCTAssertEqual(current.startDate, baseTime)
+        XCTAssertEqual(current.lastEvidenceAt, baseTime.addingTimeInterval(8 * 60))
+        XCTAssertEqual(current.latitude, 34.660_15)
+    }
+
+    @MainActor
+    func testCurrentLocationProjectionDoesNotShowStaleEvidence() {
+        let evidence = [locationEvidence(at: baseTime)]
+
+        XCTAssertNil(CurrentLocationProjection.project(
+            evidence: evidence,
+            now: baseTime.addingTimeInterval(21 * 60),
+            dayStart: baseTime.addingTimeInterval(-60 * 60)
+        ))
+    }
+
+    @MainActor
+    func testCurrentLocationProjectionStopsAtPreviousPlace() throws {
+        let recent = baseTime.addingTimeInterval(10 * 60)
+        let evidence = [
+            locationEvidence(at: baseTime, latitude: 34.66, longitude: 133.92),
+            locationEvidence(at: recent, latitude: 34.68, longitude: 133.94),
+        ]
+
+        let current = try XCTUnwrap(CurrentLocationProjection.project(
+            evidence: evidence,
+            now: recent.addingTimeInterval(60),
+            dayStart: baseTime.addingTimeInterval(-60 * 60)
+        ))
+
+        XCTAssertEqual(current.startDate, recent)
+    }
+
+    @MainActor
+    func testRepositionAssertionSurvivesTimelineRebuild() throws {
+        let context = try makeContext()
+        let visit = insertVisit(
+            arrival: baseTime,
+            departure: baseTime.addingTimeInterval(60 * 60),
+            observedAt: baseTime,
+            in: context
+        )
+        try context.save()
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60 * 60))
+        let stay = try stay(for: visit.id, in: context)
+
+        let correctedLatitude = 34.670_5
+        let correctedLongitude = 133.930_5
+        try TimelineEditingService().saveStay(
+            stay,
+            title: stay.title,
+            startDate: stay.startDate,
+            endDate: stay.endDate,
+            latitude: correctedLatitude,
+            longitude: correctedLongitude,
+            confirmLocation: false,
+            in: context
+        )
+
+        var assertions = try context.fetch(FetchDescriptor<UserAssertion>())
+        let reposition = try XCTUnwrap(assertions.first { $0.type == .reposition && $0.isActive })
+        XCTAssertEqual(reposition.replacementLatitude, correctedLatitude)
+        XCTAssertEqual(reposition.replacementLongitude, correctedLongitude)
+
+        visit.latitude = 34.65
+        visit.longitude = 133.91
+        try context.save()
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60 * 60))
+
+        XCTAssertEqual(stay.latitude, correctedLatitude)
+        XCTAssertEqual(stay.longitude, correctedLongitude)
+        assertions = try context.fetch(FetchDescriptor<UserAssertion>())
+        XCTAssertEqual(assertions.filter { $0.type == .reposition && $0.isActive }.count, 1)
+    }
+
+    @MainActor
     private func insertTransitionVisits(
         firstDeparture: Date,
         secondArrival: Date,

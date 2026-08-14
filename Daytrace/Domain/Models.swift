@@ -355,6 +355,8 @@ struct TimelineEditingService {
         title: String,
         startDate: Date,
         endDate: Date?,
+        latitude: Double? = nil,
+        longitude: Double? = nil,
         confirmLocation: Bool,
         in context: ModelContext
     ) throws {
@@ -362,6 +364,15 @@ struct TimelineEditingService {
         let safeTitle = trimmedTitle.isEmpty ? episode.title : trimmedTitle
         let startChanged = startDate != episode.startDate
         let endChanged = endDate != episode.endDate
+        let replacementCoordinate = coordinate(latitude: latitude, longitude: longitude)
+        let positionChanged = replacementCoordinate.map {
+            guard let currentLatitude = episode.latitude,
+                  let currentLongitude = episode.longitude else {
+                return true
+            }
+            return abs($0.latitude - currentLatitude) >= 0.000_001
+                || abs($0.longitude - currentLongitude) >= 0.000_001
+        } ?? false
 
         if startChanged || endChanged {
             let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
@@ -388,6 +399,19 @@ struct TimelineEditingService {
             ))
             episode.title = safeTitle
             detachMismatchedPlace(from: episode, title: safeTitle, in: context)
+        }
+
+        if let replacementCoordinate, positionChanged {
+            deactivateAssertions(for: episode.id, type: .reposition, in: context)
+            context.insert(UserAssertion(
+                episodeID: episode.id,
+                type: .reposition,
+                replacementLatitude: replacementCoordinate.latitude,
+                replacementLongitude: replacementCoordinate.longitude
+            ))
+            episode.latitude = replacementCoordinate.latitude
+            episode.longitude = replacementCoordinate.longitude
+            detachPlaceOutsideCorrectedLocation(from: episode, in: context)
         }
 
         if startChanged || endChanged {
@@ -423,7 +447,7 @@ struct TimelineEditingService {
             && !safeTitle.isEmpty
             && safeTitle != "未設定の場所"
 
-        if canConfirmLocation, episode.confidence != .high {
+        if canConfirmLocation {
             deactivateAssertions(for: episode.id, type: .confirm, in: context)
             context.insert(UserAssertion(episodeID: episode.id, type: .confirm))
             episode.confidence = .high
@@ -432,6 +456,13 @@ struct TimelineEditingService {
         }
 
         try context.save()
+    }
+
+    private func coordinate(latitude: Double?, longitude: Double?) -> CLLocationCoordinate2D? {
+        guard let latitude, let longitude else { return nil }
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
+        return coordinate
     }
 
     func setSuppressed(
@@ -530,6 +561,28 @@ struct TimelineEditingService {
         guard let placeID = episode.placeID else { return }
         let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
         guard let place = places.first(where: { $0.id == placeID }), place.name != title else { return }
+        episode.placeID = nil
+        episode.confidence = .medium
+        episode.subtitle = "場所を確認"
+    }
+
+    private func detachPlaceOutsideCorrectedLocation(
+        from episode: TimelineEpisode,
+        in context: ModelContext
+    ) {
+        guard let placeID = episode.placeID,
+              let latitude = episode.latitude,
+              let longitude = episode.longitude else {
+            return
+        }
+        let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
+        guard let place = places.first(where: { $0.id == placeID }) else { return }
+
+        let distance = CLLocation(latitude: latitude, longitude: longitude).distance(
+            from: CLLocation(latitude: place.latitude, longitude: place.longitude)
+        )
+        guard distance > max(place.radius, 100) else { return }
+
         episode.placeID = nil
         episode.confidence = .medium
         episode.subtitle = "場所を確認"

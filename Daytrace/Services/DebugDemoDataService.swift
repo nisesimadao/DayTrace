@@ -22,6 +22,9 @@ struct DebugDemoDataService {
         static let assertions = (1...8).map {
             UUID(uuidString: String(format: "D4000000-0000-4000-8000-%012d", $0))!
         }
+        static let locations = (1...2).map {
+            UUID(uuidString: String(format: "D5000000-0000-4000-8000-%012d", $0))!
+        }
     }
 
     func isInstalled(in context: ModelContext) throws -> Bool {
@@ -43,6 +46,25 @@ struct DebugDemoDataService {
             PlaceRecord(id: ID.places[2], name: "小さな本屋", latitude: 35.6896, longitude: 139.7006, source: .userConfirmed)
         ]
         places.forEach { context.insert($0) }
+
+        let currentPlace = places[1]
+        let currentSamples: [(minutesAgo: Int, latitudeOffset: Double, longitudeOffset: Double)] = [
+            (12, -0.000_08, 0.000_05),
+            (1, 0.000_04, -0.000_03),
+        ]
+        for (index, sample) in currentSamples.enumerated() {
+            context.insert(LocationEvidence(
+                id: ID.locations[index],
+                timestamp: now.addingTimeInterval(TimeInterval(-sample.minutesAgo * 60)),
+                latitude: currentPlace.latitude + sample.latitudeOffset,
+                longitude: currentPlace.longitude + sample.longitudeOffset,
+                horizontalAccuracy: 18,
+                speed: 0,
+                course: -1,
+                source: index == 0 ? .significantChange : .standardLocation,
+                timeZoneIdentifier: zone
+            ))
+        }
 
         let stays: [(day: Int, hour: Int, duration: Int, title: String, place: Int)] = [
             (0, 8, 70, "朝の喫茶店", 0),
@@ -123,6 +145,7 @@ struct DebugDemoDataService {
         let journalIDs = Set(ID.journals)
         let noteIDs = Set(ID.notes)
         let assertionIDs = Set(ID.assertions)
+        let locationIDs = Set(ID.locations)
 
         try context.fetch(FetchDescriptor<PlaceRecord>())
             .filter { placeIDs.contains($0.id) }
@@ -138,6 +161,9 @@ struct DebugDemoDataService {
             .forEach { context.delete($0) }
         try context.fetch(FetchDescriptor<UserAssertion>())
             .filter { assertionIDs.contains($0.id) }
+            .forEach { context.delete($0) }
+        try context.fetch(FetchDescriptor<LocationEvidence>())
+            .filter { locationIDs.contains($0.id) }
             .forEach { context.delete($0) }
 
         try context.save()

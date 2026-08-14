@@ -201,7 +201,7 @@ struct TimelineEngine {
             episode.endDate = visit.departureDate
         }
 
-        if !assertionTypes.contains(.rename) {
+        if !assertionTypes.contains(.rename) && !assertionTypes.contains(.reposition) {
             episode.title = inferredTitle
             episode.subtitle = inferredSubtitle
             episode.placeID = resolvedPlace?.id
@@ -212,7 +212,11 @@ struct TimelineEngine {
             episode.longitude = visit.longitude
         }
 
-        episode.confidence = assertionTypes.contains(.confirm) ? .high : inferredConfidence
+        if assertionTypes.contains(.confirm) {
+            episode.confidence = .high
+        } else if !assertionTypes.contains(.reposition) {
+            episode.confidence = inferredConfidence
+        }
 
         for assertion in assertions.sorted(by: { $0.createdAt < $1.createdAt }) {
             switch assertion.type {
