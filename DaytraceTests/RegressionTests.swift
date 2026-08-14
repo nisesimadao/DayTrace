@@ -7,6 +7,42 @@ final class RegressionTests: XCTestCase {
     private let tokyo = "Asia/Tokyo"
     private let baseTime = Date(timeIntervalSince1970: 1_786_500_000)
 
+#if DEBUG
+    @MainActor
+    func testDebugDemoDataIsIdempotentAndRemovalPreservesUserData() throws {
+        let context = try makeContext()
+        let userJournal = JournalEntry(
+            dayAnchor: baseTime,
+            body: "ユーザーの日記",
+            timeZoneIdentifier: tokyo
+        )
+        let userPlace = PlaceRecord(
+            name: "ユーザーの場所",
+            latitude: 34.66,
+            longitude: 133.92
+        )
+        context.insert(userJournal)
+        context.insert(userPlace)
+        try context.save()
+
+        let service = DebugDemoDataService()
+        try service.install(in: context, now: baseTime)
+        try service.install(in: context, now: baseTime)
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<JournalEntry>()).count, 6)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PlaceRecord>()).count, 4)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<TimelineEpisode>()).count, 8)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MomentNote>()).count, 3)
+
+        try service.remove(in: context)
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<JournalEntry>()).map(\.id), [userJournal.id])
+        XCTAssertEqual(try context.fetch(FetchDescriptor<PlaceRecord>()).map(\.id), [userPlace.id])
+        XCTAssertTrue(try context.fetch(FetchDescriptor<TimelineEpisode>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<MomentNote>()).isEmpty)
+    }
+#endif
+
     func testCalendarDayUsesRecordedTimezoneAndDSTDayHasRealDuration() throws {
         let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
         let tokyoZone = try XCTUnwrap(TimeZone(identifier: tokyo))

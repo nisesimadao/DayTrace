@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct DayTimeline: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let episodes: [TimelineEpisode]
     @Binding var selectedEpisodeID: UUID?
     let lastEvidenceAt: Date?
@@ -39,7 +41,7 @@ struct DayTimeline: View {
                     allowsEditing: allowsEditing,
                     allowsSuppression: allowsSuppression,
                     onSelect: {
-                        withAnimation(.snappy) {
+                        withAnimation(reduceMotion ? nil : .snappy) {
                             selectedEpisodeID = selectedEpisodeID == episode.id ? nil : episode.id
                         }
                     },
@@ -54,7 +56,7 @@ struct DayTimeline: View {
                 )
             }
         }
-        .animation(.snappy, value: selectedEpisodeID)
+        .animation(reduceMotion ? nil : .snappy, value: selectedEpisodeID)
     }
 }
 
@@ -75,59 +77,60 @@ private struct TimelineEpisodeRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Text(TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 43, alignment: .trailing)
-                .padding(.top, 1)
+        Button(action: onSelect) {
+            HStack(alignment: .top, spacing: 14) {
+                Text(TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 43, alignment: .trailing)
+                    .padding(.top, 1)
 
-            TimelineRail(
-                episode: episode,
-                drawsTopLine: drawsTopLine,
-                drawsBottomLine: drawsBottomLine
-            )
+                TimelineRail(
+                    episode: episode,
+                    drawsTopLine: drawsTopLine,
+                    drawsBottomLine: drawsBottomLine
+                )
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(episode.title)
-                        .font(episode.kind == .stay ? .body.weight(.semibold) : .subheadline.weight(.medium))
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(episode.title)
+                            .font(episode.kind == .stay ? .body.weight(.semibold) : .subheadline.weight(.medium))
 
-                    if episode.confidence == .low && episode.kind == .stay {
-                        Text("?")
-                            .font(.caption.bold())
+                        if episode.confidence == .low && episode.kind == .stay {
+                            Text("?")
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let subtitle = episode.subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                }
 
-                if let subtitle = episode.subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                    if let duration = TimelineFormatting.duration(from: episode.startDate, to: episode.endDate) {
+                        Text(duration)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if episode.kind == .stay {
+                        Text(openEndedStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
-                if let duration = TimelineFormatting.duration(from: episode.startDate, to: episode.endDate) {
-                    Text(duration)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if episode.kind == .stay {
-                    Text(openEndedStatus)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if canEdit && isSelected {
+                        Label("長押しして修正", systemImage: "hand.tap")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                    }
                 }
-
-                if canEdit && isSelected {
-                    Label("長押しして修正", systemImage: "hand.tap")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 4)
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, episode.kind == .stay ? 30 : 22)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, episode.kind == .stay ? 30 : 22)
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
+        .buttonStyle(.plain)
         .onLongPressGesture(minimumDuration: 0.35) {
             if canEdit { onEdit() }
         }
@@ -140,7 +143,6 @@ private struct TimelineEpisodeRow: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
         .accessibilityAction(named: canEdit ? "修正" : "選択") {
             canEdit ? onEdit() : onSelect()
         }
@@ -194,12 +196,12 @@ private struct TimelineRail: View {
             }
         case .move:
             Image(systemName: "arrow.down")
-                .font(.caption2.weight(.bold))
+                .font(.caption.bold())
                 .foregroundStyle(.secondary)
                 .frame(width: DS.timelineDot, height: DS.timelineDot)
         case .gap:
             Image(systemName: "ellipsis")
-                .font(.caption2.weight(.bold))
+                .font(.caption.bold())
                 .foregroundStyle(.secondary)
                 .frame(width: DS.timelineDot, height: DS.timelineDot)
         }

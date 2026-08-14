@@ -44,6 +44,11 @@ struct AppRootView: View {
             .task {
                 locationRecorder.attach(context: modelContext)
                 locationRecorder.configureIfNeeded()
+#if DEBUG
+                if ProcessInfo.processInfo.environment["DAYTRACE_INSTALL_DEMO_DATA"] == "1" {
+                    try? DebugDemoDataService().install(in: modelContext)
+                }
+#endif
                 try? await ReviewReminderService.refresh(in: modelContext)
                 WidgetSnapshotService.refresh(in: modelContext)
 
@@ -155,12 +160,16 @@ private struct PrivacyCover: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 14) {
-                Image(systemName: isLocked ? "lock.fill" : "circle.dotted")
-                    .font(.system(size: 31, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                DaytraceBrandMark(size: 66)
 
                 Text("DayTrace")
                     .font(.title2.bold())
+
+                if !isLocked {
+                    Text("今日の記憶を、静かに守ります")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
 
                 if isLocked {
                     if isAuthenticating {

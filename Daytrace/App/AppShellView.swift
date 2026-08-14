@@ -6,33 +6,49 @@ extension Notification.Name {
 }
 
 struct AppShellView: View {
-    @State private var selectedTab: AppTab = .today
+    @State private var selectedTab: AppTab
+
+    init() {
+#if DEBUG
+        let requestedTab = ProcessInfo.processInfo.environment["DAYTRACE_START_TAB"]
+        _selectedTab = State(initialValue: requestedTab == "history" ? .history : .today)
+#else
+        _selectedTab = State(initialValue: .today)
+#endif
+    }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            NavigationStack {
-                TodayView()
-            }
-            .tabItem {
-                Label("今日", systemImage: "clock")
-            }
-            .tag(AppTab.today)
+        GeometryReader { geometry in
+            TabView(selection: $selectedTab) {
+                Tab("今日", systemImage: "clock", value: AppTab.today) {
+                    NavigationStack {
+                        TodayView()
+                    }
+                }
 
-            NavigationStack {
-                HistoryRootView()
+                Tab("履歴", systemImage: "book.closed", value: AppTab.history) {
+                    NavigationStack {
+                        HistoryRootView()
+                    }
+                }
             }
-            .tabItem {
-                Label("履歴", systemImage: "calendar")
+            .daytraceModernTabBar()
+            .overlay(alignment: .top) {
+                DaytraceDeviceTopBrand(topInset: geometry.safeAreaInsets.top)
             }
-            .tag(AppTab.history)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .daytraceOpenToday)) { _ in
-            selectedTab = .today
-        }
-        .onOpenURL { url in
-            guard url.scheme == "daytrace" else { return }
-            if url.host == "today" {
+            .onReceive(NotificationCenter.default.publisher(for: .daytraceOpenToday)) { _ in
                 selectedTab = .today
+            }
+            .onOpenURL { url in
+                guard url.scheme == "daytrace" else { return }
+                switch url.host {
+                case "today":
+                    selectedTab = .today
+                case "history":
+                    selectedTab = .history
+                default:
+                    break
+                }
             }
         }
     }

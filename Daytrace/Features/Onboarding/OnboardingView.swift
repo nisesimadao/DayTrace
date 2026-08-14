@@ -5,6 +5,7 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     @Environment(LocationRecorder.self) private var recorder
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = 0
 
     var body: some View {
@@ -42,7 +43,7 @@ struct OnboardingView: View {
         .onChange(of: recorder.authorizationStatus) { _, status in
             guard page == 1 else { return }
             if status == .authorizedWhenInUse || status == .authorizedAlways {
-                withAnimation(.snappy) { page = 2 }
+                withAnimation(reduceMotion ? nil : .snappy) { page = 2 }
             }
         }
     }
@@ -59,15 +60,15 @@ struct OnboardingView: View {
     private func primaryAction() {
         switch page {
         case 0:
-            withAnimation(.snappy) { page = 1 }
+            withAnimation(reduceMotion ? nil : .snappy) { page = 1 }
         case 1:
             switch recorder.authorizationStatus {
             case .notDetermined:
                 recorder.requestWhenInUse()
             case .authorizedWhenInUse, .authorizedAlways:
-                withAnimation(.snappy) { page = 2 }
+                withAnimation(reduceMotion ? nil : .snappy) { page = 2 }
             default:
-                withAnimation(.snappy) { page = 2 }
+                withAnimation(reduceMotion ? nil : .snappy) { page = 2 }
             }
         default:
             if recorder.authorizationStatus == .authorizedWhenInUse {
@@ -79,7 +80,7 @@ struct OnboardingView: View {
 
     private func advanceOrFinish() {
         if page < 2 {
-            withAnimation(.snappy) { page += 1 }
+            withAnimation(reduceMotion ? nil : .snappy) { page += 1 }
         } else {
             onComplete()
         }
@@ -89,7 +90,7 @@ struct OnboardingView: View {
 private struct OnboardingIntroPage: View {
     var body: some View {
         OnboardingPage(
-            symbol: "sparkles",
+            symbol: nil,
             eyebrow: "DAYTRACE",
             title: "今日を、あとから\n思い出せるように。",
             message: "訪れた場所や移動の断片を静かに記録して、夜には一日の流れを見返せます。"
@@ -120,7 +121,7 @@ private struct OnboardingBackgroundPage: View {
 }
 
 private struct OnboardingPage: View {
-    let symbol: String
+    let symbol: String?
     let eyebrow: String
     let title: String
     let message: String
@@ -129,10 +130,15 @@ private struct OnboardingPage: View {
         VStack(alignment: .leading, spacing: 24) {
             Spacer()
 
-            Image(systemName: symbol)
-                .font(.system(size: 42, weight: .medium))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: 42, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+            } else {
+                DaytraceBrandMark(size: 88)
+            }
 
             VStack(alignment: .leading, spacing: 10) {
                 Text(eyebrow)
@@ -141,8 +147,8 @@ private struct OnboardingPage: View {
                     .tracking(1.2)
 
                 Text(title)
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
-                    .tracking(-1.1)
+                    .font(.largeTitle.bold())
+                    .fontDesign(.rounded)
 
                 Text(message)
                     .font(.body)

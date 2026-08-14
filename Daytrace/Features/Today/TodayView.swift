@@ -4,6 +4,7 @@ import SwiftData
 import SwiftUI
 
 struct TodayView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var modelContext
     @Environment(LocationRecorder.self) private var recorder
     @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
@@ -11,9 +12,21 @@ struct TodayView: View {
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
 
     @State private var selectedEpisodeID: UUID?
-    @State private var isSettingsPresented = false
+    @State private var isSettingsPresented: Bool
     @State private var stayEditSelection: StayEditSelection?
     @State private var undoSuppressedEpisodeID: UUID?
+    @State private var isTimelineErrorPresented = false
+    @State private var timelineErrorMessage = ""
+
+    init() {
+#if DEBUG
+        _isSettingsPresented = State(
+            initialValue: ProcessInfo.processInfo.environment["DAYTRACE_SHOW_SETTINGS"] == "1"
+        )
+#else
+        _isSettingsPresented = State(initialValue: false)
+#endif
+    }
 
     private var day: DayInterval {
         DayInterval(containing: .now, timeZone: .current)
@@ -43,10 +56,18 @@ struct TodayView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: DS.sectionSpacing) {
-                TodayHeader(episodes: todayEpisodes)
+                TodayHeader(
+                    episodes: todayEpisodes,
+                    openSettings: { isSettingsPresented = true }
+                )
+
+                JournalComposer(day: day, existingJournal: todayJournal)
+
+                LocationContextHeader()
 
                 if recorder.health != .healthy {
                     TrackingHealthBanner(health: recorder.health)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 if hasLocatableStay {
@@ -54,6 +75,7 @@ struct TodayView: View {
                         episodes: todayEpisodes,
                         selectedEpisodeID: $selectedEpisodeID
                     )
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
 
                 if todayEpisodes.isEmpty {
@@ -69,30 +91,25 @@ struct TodayView: View {
                         onSuppress: suppress
                     )
                 }
-
-                JournalComposer(day: day, existingJournal: todayJournal)
             }
             .padding(.horizontal, DS.horizontalPadding)
             .padding(.bottom, 40)
         }
-        .background(Color(.systemBackground))
-        .navigationTitle("今日")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isSettingsPresented = true
-                } label: {
-                    Image(systemName: "ellipsis")
-                }
-                .accessibilityLabel("設定")
-            }
-        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: recorder.health == .healthy)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: hasLocatableStay)
+        .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isSettingsPresented) {
             SettingsView()
         }
         .sheet(item: $stayEditSelection) { selection in
             StayEditorSheet(episode: selection.episode)
+        }
+        .navigationDestination(for: CalendarDay.self) { day in
+            HistoricalDayDetailView(day: day)
+        }
+        .alert("タイムラインを更新できません", isPresented: $isTimelineErrorPresented) { } message: {
+            Text(timelineErrorMessage)
         }
         .task {
             recorder.requestForegroundSnapshot()
@@ -111,35 +128,47 @@ struct TodayView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 11)
-                .background(.regularMaterial, in: Capsule())
+                .daytraceGlassSurface(cornerRadius: 22)
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 6)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: undoSuppressedEpisodeID)
     }
 
     private func suppress(_ episode: TimelineEpisode) {
         guard episode.kind == .stay else { return }
-        try? TimelineEditingService().setSuppressed(
-            episodeID: episode.id,
-            suppressed: true,
-            in: modelContext
-        )
-        try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
-        if selectedEpisodeID == episode.id {
-            selectedEpisodeID = nil
+        do {
+            try TimelineEditingService().setSuppressed(
+                episodeID: episode.id,
+                suppressed: true,
+                in: modelContext
+            )
+            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
+            if selectedEpisodeID == episode.id {
+                selectedEpisodeID = nil
+            }
+            undoSuppressedEpisodeID = episode.id
+        } catch {
+            timelineErrorMessage = error.localizedDescription
+            isTimelineErrorPresented = true
         }
-        undoSuppressedEpisodeID = episode.id
     }
 
     private func restoreSuppressed(_ episodeID: UUID) {
-        try? TimelineEditingService().setSuppressed(
-            episodeID: episodeID,
-            suppressed: false,
-            in: modelContext
-        )
-        try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
-        undoSuppressedEpisodeID = nil
+        do {
+            try TimelineEditingService().setSuppressed(
+                episodeID: episodeID,
+                suppressed: false,
+                in: modelContext
+            )
+            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
+            undoSuppressedEpisodeID = nil
+        } catch {
+            timelineErrorMessage = error.localizedDescription
+            isTimelineErrorPresented = true
+        }
     }
 }
 
@@ -150,25 +179,65 @@ private struct StayEditSelection: Identifiable {
 
 private struct TodayHeader: View {
     let episodes: [TimelineEpisode]
+    let openSettings: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(Date.now.formatted(.dateTime.weekday(.wide).locale(Locale(identifier: "ja_JP"))))
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                DaytraceWordmark(markSize: 29)
 
-            Text(Date.now.formatted(.dateTime.month(.wide).day().locale(Locale(identifier: "ja_JP"))))
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-                .tracking(-0.7)
+                Spacer()
 
-            if !episodes.isEmpty {
-                let stays = episodes.filter { $0.kind == .stay }.count
-                Text("\(stays)か所 · 今日の記録")
-                    .font(.subheadline)
+                Button("設定", systemImage: "ellipsis", action: openSettings)
+                    .labelStyle(.iconOnly)
+                    .font(.headline)
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .buttonStyle(.daytraceGlass)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(Date.now.formatted(.dateTime.weekday(.wide).locale(Locale(identifier: "ja_JP"))))
+                    .font(.callout)
                     .foregroundStyle(.secondary)
+
+                Text(Date.now.formatted(.dateTime.month(.wide).day().locale(Locale(identifier: "ja_JP"))))
+                    .font(.largeTitle.bold())
+                    .fontDesign(.rounded)
+                    .foregroundStyle(.primary)
+
+                if !episodes.isEmpty {
+                    let stays = episodes.count { $0.kind == .stay }
+                    Label("\(stays)か所が、今日の手がかりになっています", systemImage: "sparkle")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("まだ何も起きていない日も、ちゃんと一日です。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
-        .padding(.top, 12)
+        .padding(DS.cardPadding)
+        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.contentCornerRadius)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        }
+        .padding(.top, 8)
+    }
+}
+
+private struct LocationContextHeader: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("今日の手がかり")
+                .font(.title2.bold())
+
+            Text("場所と移動は、思い出すための背景です。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -189,7 +258,8 @@ private struct EmptyTimelineState: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 8)
+        .padding(DS.cardPadding)
+        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
         .accessibilityElement(children: .combine)
     }
 }
@@ -213,7 +283,8 @@ private struct TrackingHealthBanner: View {
 
             Spacer()
         }
-        .padding(.vertical, 4)
+        .padding(DS.cardPadding)
+        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
         .accessibilityElement(children: .combine)
     }
 
@@ -438,32 +509,30 @@ struct StayEditorSheet: View {
                 confirmLocation: shouldApplyConfirmation,
                 in: modelContext
             )
+            if rebuildHistoricalTransitions {
+                if timeWasEdited {
+                    var boundaryDates = [originalStart, startDate]
+                    if let originalEnd { boundaryDates.append(originalEnd) }
+                    if let proposedEndDate { boundaryDates.append(proposedEndDate) }
+
+                    if let first = boundaryDates.min(), let last = boundaryDates.max() {
+                        let rebuildInterval = DateInterval(
+                            start: first.addingTimeInterval(-1),
+                            end: last.addingTimeInterval(1)
+                        )
+                        try TimelineEngine().rebuildTransitions(
+                            covering: rebuildInterval,
+                            in: modelContext
+                        )
+                    }
+                }
+            } else {
+                try TimelineEngine().rebuildRecentTimeline(in: modelContext)
+            }
+            dismiss()
         } catch {
             saveErrorMessage = error.localizedDescription
-            return
         }
-
-        if rebuildHistoricalTransitions {
-            if timeWasEdited {
-                var boundaryDates = [originalStart, startDate]
-                if let originalEnd { boundaryDates.append(originalEnd) }
-                if let proposedEndDate { boundaryDates.append(proposedEndDate) }
-
-                if let first = boundaryDates.min(), let last = boundaryDates.max() {
-                    let rebuildInterval = DateInterval(
-                        start: first.addingTimeInterval(-1),
-                        end: last.addingTimeInterval(1)
-                    )
-                    try? TimelineEngine().rebuildTransitions(
-                        covering: rebuildInterval,
-                        in: modelContext
-                    )
-                }
-            }
-        } else {
-            try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
-        }
-        dismiss()
     }
 }
 

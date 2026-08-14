@@ -2,7 +2,6 @@ import CoreLocation
 import Foundation
 import SwiftData
 import SwiftUI
-import UIKit
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
@@ -58,6 +57,25 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    HStack(spacing: 14) {
+                        DaytraceBrandMark(size: 52)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            DaytraceWordmark(markSize: 24)
+                            Text("日々の記憶を、静かに残す")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                .listRowBackground(Color.clear)
+
+#if DEBUG
+                DebugDemoDataSettingsSection()
+#endif
+
                 TrackingDiagnosticsSection()
 
                 ReviewReminderSettingsSection()

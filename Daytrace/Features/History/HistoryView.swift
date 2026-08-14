@@ -3,6 +3,7 @@ import SwiftData
 import SwiftUI
 
 struct HistoryView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(sort: \TimelineEpisode.startDate, order: .reverse) private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor, order: .reverse) private var journals: [JournalEntry]
     @Query(sort: \MomentNote.timestamp, order: .reverse) private var momentNotes: [MomentNote]
@@ -10,8 +11,6 @@ struct HistoryView: View {
 
     @State private var displayedMonth = Date.now
     @State private var searchText = ""
-
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
 
     private var visibleEpisodes: [TimelineEpisode] {
         let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
@@ -26,17 +25,17 @@ struct HistoryView: View {
         ScrollView {
             if trimmedSearchText.isEmpty {
                 VStack(alignment: .leading, spacing: DS.sectionSpacing) {
-                    MonthHeader(displayedMonth: $displayedMonth)
-                    MonthGrid(
+                    HistoryCalendarCard(
                         displayedMonth: displayedMonth,
+                        setDisplayedMonth: { displayedMonth = $0 },
                         episodes: visibleEpisodes,
-                        journals: journals,
-                        columns: columns
+                        journals: journals
                     )
                     RecentDaysList(episodes: visibleEpisodes, journals: journals)
                 }
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 40)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             } else {
                 HistorySearchResults(
                     query: trimmedSearchText,
@@ -46,46 +45,84 @@ struct HistoryView: View {
                 )
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 40)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .navigationTitle("履歴")
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: "場所・日記・メモを検索"
         )
-        .navigationDestination(for: CalendarDay.self) { day in
-            HistoricalDayDetailView(day: day)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: trimmedSearchText.isEmpty)
+    }
+}
+
+private struct HistoryCalendarCard: View {
+    let displayedMonth: Date
+    let setDisplayedMonth: (Date) -> Void
+    let episodes: [TimelineEpisode]
+    let journals: [JournalEntry]
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+
+    var body: some View {
+        VStack(spacing: 12) {
+            MonthHeader(
+                displayedMonth: displayedMonth,
+                setDisplayedMonth: setDisplayedMonth
+            )
+            MonthGrid(
+                displayedMonth: displayedMonth,
+                episodes: episodes,
+                journals: journals,
+                columns: columns
+            )
         }
+        .padding(DS.cardPadding)
+        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
+        .padding(.top, 8)
     }
 }
 
 private struct MonthHeader: View {
-    @Binding var displayedMonth: Date
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let displayedMonth: Date
+    let setDisplayedMonth: (Date) -> Void
 
+    @ViewBuilder
     var body: some View {
-        HStack {
-            Button {
-                shiftMonth(-1)
-            } label: {
-                Image(systemName: "chevron.left")
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 12) {
+                controls
             }
+        } else {
+            controls
+        }
+    }
+
+    private var controls: some View {
+        HStack {
+            Button("前の月", systemImage: "chevron.left") { shiftMonth(-1) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.daytraceGlass)
 
             Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
                 .font(.title2.bold())
                 .frame(maxWidth: .infinity)
+                .contentTransition(.numericText())
 
-            Button {
-                shiftMonth(1)
-            } label: {
-                Image(systemName: "chevron.right")
-            }
+            Button("次の月", systemImage: "chevron.right") { shiftMonth(1) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.daytraceGlass)
         }
-        .padding(.top, 12)
     }
 
     private func shiftMonth(_ amount: Int) {
-        displayedMonth = Calendar.current.date(byAdding: .month, value: amount, to: displayedMonth) ?? displayedMonth
+        let shifted = Calendar.current.date(byAdding: .month, value: amount, to: displayedMonth) ?? displayedMonth
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
+            setDisplayedMonth(shifted)
+        }
     }
 }
 
@@ -118,13 +155,14 @@ private struct MonthGrid: View {
             HStack {
                 ForEach(["月", "火", "水", "木", "金", "土", "日"], id: \.self) { title in
                     Text(title)
-                        .font(.caption2.weight(.medium))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                 }
             }
 
             LazyVGrid(columns: columns, spacing: 8) {
+                // EnumeratedSequence becomes a RandomAccessCollection only on iOS 26.
                 ForEach(Array(days.enumerated()), id: \.offset) { _, date in
                     if let date {
                         let day = CalendarDay(containing: date, timeZone: .current)
@@ -135,13 +173,14 @@ private struct MonthGrid: View {
                         )
 
                         if day <= today {
-                            NavigationLink(value: day) { cell }
+                        NavigationLink(value: day) { cell }
                                 .buttonStyle(.plain)
+                                .hoverEffect(.highlight)
                         } else {
                             cell.opacity(0.35)
                         }
                     } else {
-                        Color.clear.frame(height: 42)
+                        Color.clear.frame(height: 44)
                     }
                 }
             }
@@ -165,19 +204,32 @@ private struct DayCell: View {
     var body: some View {
         VStack(spacing: 3) {
             Text(date.formatted(.dateTime.day()))
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(Calendar.current.isDateInToday(date) ? Color.accentColor : .primary)
+                .font(.subheadline.bold().monospacedDigit())
+                .foregroundStyle(hasJournal ? Color.white : .primary)
             HStack(spacing: 3) {
                 Circle()
-                    .fill(hasMemory ? Color.secondary : .clear)
-                    .frame(width: 4, height: 4)
-                Circle()
-                    .fill(hasJournal ? Color.accentColor : .clear)
+                    .fill(hasMemory ? (hasJournal ? Color.white.opacity(0.8) : Color.secondary) : .clear)
                     .frame(width: 4, height: 4)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 42)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .background(hasJournal ? Color.accentColor : Color.clear, in: .rect(cornerRadius: 12))
+        .overlay {
+            if Calendar.current.isDateInToday(date) {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.accentColor, lineWidth: 1.5)
+            }
+        }
         .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [date.formatted(.dateTime.month().day().locale(Locale(identifier: "ja_JP")))]
+        if hasMemory { parts.append("位置の手がかりあり") }
+        if hasJournal { parts.append("日記あり") }
+        return parts.joined(separator: "、")
     }
 }
 
@@ -197,15 +249,41 @@ private struct RecentDaysList: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("最近")
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("最近の記録")
+                    .font(.title3.bold())
+                Spacer()
+                Text("\(recentDays.count)日")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
 
-            ForEach(recentDays, id: \.self) { day in
-                NavigationLink(value: day) {
-                    RecentDayRow(day: day, episodes: episodes, journals: journals)
+            if recentDays.isEmpty {
+                ContentUnavailableView {
+                    Label("まだ記録がありません", systemImage: "book.closed")
+                } description: {
+                    Text("日記や場所の手がかりが、ここに日付順で並びます。")
                 }
-                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(recentDays.enumerated()), id: \.element) { index, day in
+                        NavigationLink(value: day) {
+                            RecentDayRow(day: day, episodes: episodes, journals: journals)
+                        }
+                        .buttonStyle(.plain)
+                        .hoverEffect(.highlight)
+
+                        if index < recentDays.count - 1 {
+                            Divider()
+                                .padding(.leading, 76)
+                        }
+                    }
+                }
+                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
             }
         }
     }
@@ -234,27 +312,46 @@ private struct RecentDayRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        HStack(spacing: 14) {
             if let displayDate {
-                Text(displayDate.formatted(.dateTime.month().day().weekday(.short).locale(Locale(identifier: "ja_JP"))))
-                    .font(.subheadline.weight(.semibold))
+                VStack(spacing: 1) {
+                    Text(displayDate.formatted(.dateTime.day()))
+                        .font(.title3.bold().monospacedDigit())
+                    Text(displayDate.formatted(.dateTime.month(.abbreviated).weekday(.short).locale(Locale(identifier: "ja_JP"))))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 48)
             }
 
-            if !stays.isEmpty {
-                Text(stays.map(\.title).joined(separator: " → "))
-                    .font(.subheadline)
-                    .lineLimit(1)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 5) {
+                if let journal, !journal.body.isEmpty {
+                    Text(journal.body)
+                        .font(.body)
+                        .lineLimit(2)
+                } else {
+                    Text(stays.isEmpty ? "一日の記録" : stays.first?.title ?? "一日の記録")
+                        .font(.body.bold())
+                        .lineLimit(1)
+                }
+
+                if !stays.isEmpty {
+                    Label(stays.map(\.title).joined(separator: " → "), systemImage: "location")
+                        .font(.subheadline)
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            if let journal, !journal.body.isEmpty {
-                Text(journal.body)
-                    .font(.body)
-                    .lineLimit(2)
-            }
+            Spacer(minLength: 4)
+
+            Image(systemName: "chevron.right")
+                .font(.caption.bold())
+                .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 2)
+        .padding(.horizontal, DS.cardPadding)
+        .padding(.vertical, 14)
         .contentShape(Rectangle())
     }
 }
@@ -335,6 +432,7 @@ private struct HistorySearchResults: View {
                         SearchDayRow(result: result)
                     }
                     .buttonStyle(.plain)
+                    .hoverEffect(.highlight)
                 }
             }
         }
@@ -345,7 +443,7 @@ private struct HistorySearchResults: View {
     }
 
     private func contains(_ value: String) -> Bool {
-        value.localizedCaseInsensitiveContains(query)
+        value.localizedStandardContains(query)
     }
 }
 
@@ -388,7 +486,8 @@ private struct SearchDayRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 3)
+        .padding(DS.cardPadding)
+        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
         .contentShape(Rectangle())
     }
 }
@@ -462,8 +561,8 @@ struct HistoricalDayDetailView: View {
                             .font(.callout.weight(.medium))
                             .foregroundStyle(.secondary)
                         Text(displayDate.formatted(.dateTime.year().month(.wide).day().locale(Locale(identifier: "ja_JP"))))
-                            .font(.system(size: 31, weight: .bold, design: .rounded))
-                            .tracking(-0.6)
+                            .font(.title.bold())
+                            .fontDesign(.rounded)
                     }
                     .padding(.top, 8)
                 }
@@ -529,6 +628,8 @@ private struct HistoricalJournalEditor: View {
 
     @Environment(\.modelContext) private var modelContext
     @State private var bodyText = ""
+    @State private var isSaveErrorPresented = false
+    @State private var saveErrorMessage = ""
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -542,43 +643,43 @@ private struct HistoricalJournalEditor: View {
             if !notes.isEmpty {
                 VStack(alignment: .leading, spacing: 9) {
                     Text("この日のメモ")
-                        .font(.caption.weight(.semibold))
+                        .font(.caption.bold())
                         .foregroundStyle(.secondary)
 
                     ForEach(notes) { note in
                         HistoricalMomentNoteRow(note: note) {
-                            modelContext.delete(note)
-                            try? modelContext.save()
+                            do {
+                                modelContext.delete(note)
+                                try modelContext.save()
+                            } catch {
+                                saveErrorMessage = error.localizedDescription
+                                isSaveErrorPresented = true
+                            }
                         }
                     }
                 }
             }
 
-            TextEditor(text: $bodyText)
+            TextField(
+                "この日の日記",
+                text: $bodyText,
+                prompt: Text("この日はどんな日だった？").foregroundStyle(.secondary),
+                axis: .vertical
+            )
                 .focused($isFocused)
                 .font(.body)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 130)
-                .padding(12)
+                .lineLimit(4...12)
+                .padding(14)
                 .background(
                     Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
+                    in: .rect(cornerRadius: DS.contentCornerRadius)
                 )
-                .overlay(alignment: .topLeading) {
-                    if bodyText.isEmpty {
-                        Text("この日はどんな日だった？")
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 17)
-                            .padding(.vertical, 20)
-                            .allowsHitTesting(false)
-                    }
-                }
 
             HStack {
                 Spacer()
                 if existingJournal != nil || !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button("保存", action: save)
-                        .fontWeight(.semibold)
+                        .bold()
                         .buttonStyle(.daytraceGlassProminent)
                 }
             }
@@ -586,16 +687,24 @@ private struct HistoricalJournalEditor: View {
         .onAppear {
             bodyText = existingJournal?.body ?? ""
         }
+        .alert("日記を保存できません", isPresented: $isSaveErrorPresented) { } message: {
+            Text(saveErrorMessage)
+        }
     }
 
     private func save() {
-        try? JournalEditingService().save(
-            day: day,
-            body: bodyText,
-            existingJournal: existingJournal,
-            in: modelContext
-        )
-        isFocused = false
+        do {
+            try JournalEditingService().save(
+                day: day,
+                body: bodyText,
+                existingJournal: existingJournal,
+                in: modelContext
+            )
+            isFocused = false
+        } catch {
+            saveErrorMessage = error.localizedDescription
+            isSaveErrorPresented = true
+        }
     }
 }
 

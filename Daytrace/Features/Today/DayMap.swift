@@ -2,6 +2,8 @@ import MapKit
 import SwiftUI
 
 struct DayMap: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let episodes: [TimelineEpisode]
     @Binding var selectedEpisodeID: UUID?
 
@@ -20,7 +22,7 @@ struct DayMap: View {
                         coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
                     ) {
                         Button {
-                            withAnimation(.snappy) {
+                            withAnimation(reduceMotion ? nil : .snappy) {
                                 selectedEpisodeID = episode.id
                             }
                         } label: {
@@ -28,6 +30,8 @@ struct DayMap: View {
                                 isSelected: selectedEpisodeID == episode.id,
                                 confidence: episode.confidence
                             )
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(episode.title)を選択")
@@ -63,7 +67,7 @@ struct DayMap: View {
             longitudinalMeters: 900
         )
 
-        withAnimation(.snappy) {
+        withAnimation(reduceMotion ? nil : .snappy) {
             position = .region(region)
         }
     }
