@@ -77,63 +77,74 @@ private struct TimelineEpisodeRow: View {
     }
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(alignment: .top, spacing: 14) {
-                Text(TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 43, alignment: .trailing)
-                    .padding(.top, 1)
+        HStack(alignment: .top, spacing: 8) {
+            Button(action: onSelect) {
+                HStack(alignment: .top, spacing: 14) {
+                    Text(TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 43, alignment: .trailing)
+                        .padding(.top, 1)
 
-                TimelineRail(
-                    episode: episode,
-                    drawsTopLine: drawsTopLine,
-                    drawsBottomLine: drawsBottomLine
-                )
+                    TimelineRail(
+                        episode: episode,
+                        drawsTopLine: drawsTopLine,
+                        drawsBottomLine: drawsBottomLine
+                    )
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(episode.title)
-                            .font(episode.kind == .stay ? .body.weight(.semibold) : .subheadline.weight(.medium))
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(episode.title)
+                                .font(episode.kind == .stay ? .body.weight(.semibold) : .subheadline.weight(.medium))
 
-                        if episode.confidence == .low && episode.kind == .stay {
-                            Text("?")
-                                .font(.caption.bold())
+                            if episode.confidence == .low && episode.kind == .stay {
+                                Text("?")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        if let subtitle = episode.subtitle, !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                    }
 
-                    if let subtitle = episode.subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                        if let duration = TimelineFormatting.duration(from: episode.startDate, to: episode.endDate) {
+                            Text(duration)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if episode.kind == .stay {
+                            Text(openEndedStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
 
-                    if let duration = TimelineFormatting.duration(from: episode.startDate, to: episode.endDate) {
-                        Text(duration)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if episode.kind == .stay {
-                        Text(openEndedStatus)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if episode.kind == .stay {
+                            Label(isSelected ? "地図で表示中" : "地図で見る", systemImage: isSelected ? "checkmark.circle.fill" : "map")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tint)
+                                .padding(.top, 3)
+                        }
                     }
-
-                    if canEdit && isSelected {
-                        Label("長押しして修正", systemImage: "hand.tap")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, episode.kind == .stay ? 30 : 22)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, episode.kind == .stay ? 30 : 22)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.daytraceRowLink)
+
+            if canEdit {
+                Button("修正", systemImage: "slider.horizontal.3", action: onEdit)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tint)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 9)
+                    .background(Color.accentColor.opacity(0.1), in: .capsule)
+                    .accessibilityHint("場所と時刻を修正します")
             }
         }
-        .buttonStyle(.plain)
-        .onLongPressGesture(minimumDuration: 0.35) {
-            if canEdit { onEdit() }
-        }
+        .background(isSelected ? Color.accentColor.opacity(0.06) : Color.clear, in: .rect(cornerRadius: 14))
         .contextMenu {
             if canEdit {
                 Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
@@ -141,10 +152,6 @@ private struct TimelineEpisodeRow: View {
                     Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
                 }
             }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityAction(named: canEdit ? "修正" : "選択") {
-            canEdit ? onEdit() : onSelect()
         }
     }
 

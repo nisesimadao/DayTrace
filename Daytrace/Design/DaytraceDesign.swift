@@ -57,6 +57,21 @@ extension ButtonStyle where Self == GlassActionButtonStyle {
     static var daytraceGlassProminent: GlassActionButtonStyle { .init(prominent: true) }
 }
 
+struct DaytraceRowLinkButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.76 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.992 : 1)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.14), value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == DaytraceRowLinkButtonStyle {
+    static var daytraceRowLink: DaytraceRowLinkButtonStyle { .init() }
+}
+
 private struct DaytraceGlassSurface: ViewModifier {
     let cornerRadius: CGFloat
     let interactive: Bool

@@ -11,14 +11,6 @@ struct HistoryRootView: View {
         HistoryView()
             .navigationTitle("履歴")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink(value: HistoryDestination.places) {
-                        Label("場所の記憶", systemImage: "map")
-                    }
-                    .accessibilityHint("覚えた場所の地図を開きます")
-                }
-            }
             .navigationDestination(for: HistoryDestination.self) { destination in
                 switch destination {
                 case .places:
@@ -275,8 +267,17 @@ private struct HistoryPlaceRow: View {
             }
 
             Spacer()
+
+            Label(
+                isSelected ? "表示中" : "地図で見る",
+                systemImage: isSelected ? "checkmark.circle.fill" : "map"
+            )
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
         }
-        .padding(.vertical, 8)
+        .frame(minHeight: 44)
+        .padding(.vertical, 6)
         .contentShape(Rectangle())
+        .accessibilityHint("地図をこの場所へ移動します")
     }
 }

@@ -188,9 +188,8 @@ private struct TodayHeader: View {
 
                 Spacer()
 
-                Button("設定", systemImage: "ellipsis", action: openSettings)
-                    .labelStyle(.iconOnly)
-                    .font(.headline)
+                Button("設定", systemImage: "gearshape", action: openSettings)
+                    .font(.subheadline.weight(.semibold))
                     .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                     .buttonStyle(.daytraceGlass)
             }

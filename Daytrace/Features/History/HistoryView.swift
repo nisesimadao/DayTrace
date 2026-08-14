@@ -25,6 +25,7 @@ struct HistoryView: View {
         ScrollView {
             if trimmedSearchText.isEmpty {
                 VStack(alignment: .leading, spacing: DS.sectionSpacing) {
+                    HistoryPlacesLink()
                     HistoryCalendarCard(
                         displayedMonth: displayedMonth,
                         setDisplayedMonth: { displayedMonth = $0 },
@@ -58,6 +59,45 @@ struct HistoryView: View {
     }
 }
 
+private struct HistoryPlacesLink: View {
+    var body: some View {
+        NavigationLink(value: HistoryDestination.places) {
+            HStack(spacing: 14) {
+                Image(systemName: "map.fill")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                    .frame(width: 44, height: 44)
+                    .background(Color.accentColor.opacity(0.12), in: .circle)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("場所から振り返る")
+                        .font(.headline)
+                    Text("覚えた場所を地図で見て、訪れた日を開く")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 4)
+
+                Text("開く")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tint)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 7)
+                    .background(Color.accentColor.opacity(0.12), in: .capsule)
+            }
+            .padding(DS.cardPadding)
+            .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.daytraceRowLink)
+        .hoverEffect(.highlight)
+        .padding(.top, 8)
+        .accessibilityHint("覚えた場所の地図を開きます")
+    }
+}
+
 private struct HistoryCalendarCard: View {
     let displayedMonth: Date
     let setDisplayedMonth: (Date) -> Void
@@ -67,7 +107,15 @@ private struct HistoryCalendarCard: View {
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("日付から振り返る")
+                    .font(.title3.bold())
+                Text("日付をタップすると、その日の記録と日記を開きます")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
             MonthHeader(
                 displayedMonth: displayedMonth,
                 setDisplayedMonth: setDisplayedMonth
@@ -78,6 +126,14 @@ private struct HistoryCalendarCard: View {
                 journals: journals,
                 columns: columns
             )
+
+            HStack(spacing: 16) {
+                Label("日記あり", systemImage: "book.closed.fill")
+                Label("場所あり", systemImage: "location.fill")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .padding(DS.cardPadding)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
@@ -103,8 +159,8 @@ private struct MonthHeader: View {
 
     private var controls: some View {
         HStack {
-            Button("前の月", systemImage: "chevron.left") { shiftMonth(-1) }
-                .labelStyle(.iconOnly)
+            Button("前月", systemImage: "chevron.left") { shiftMonth(-1) }
+                .font(.caption.weight(.semibold))
                 .buttonStyle(.daytraceGlass)
 
             Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
@@ -112,8 +168,8 @@ private struct MonthHeader: View {
                 .frame(maxWidth: .infinity)
                 .contentTransition(.numericText())
 
-            Button("次の月", systemImage: "chevron.right") { shiftMonth(1) }
-                .labelStyle(.iconOnly)
+            Button("次月", systemImage: "chevron.right") { shiftMonth(1) }
+                .font(.caption.weight(.semibold))
                 .buttonStyle(.daytraceGlass)
         }
     }
@@ -173,7 +229,7 @@ private struct MonthGrid: View {
                         )
 
                         if day <= today {
-                        NavigationLink(value: day) { cell }
+                            NavigationLink(value: day) { cell }
                                 .buttonStyle(.plain)
                                 .hoverEffect(.highlight)
                         } else {
@@ -205,19 +261,24 @@ private struct DayCell: View {
         VStack(spacing: 3) {
             Text(date.formatted(.dateTime.day()))
                 .font(.subheadline.bold().monospacedDigit())
-                .foregroundStyle(hasJournal ? Color.white : .primary)
-            HStack(spacing: 3) {
-                Circle()
-                    .fill(hasMemory ? (hasJournal ? Color.white.opacity(0.8) : Color.secondary) : .clear)
-                    .frame(width: 4, height: 4)
-            }
+                .foregroundStyle(hasJournal ? Color.accentColor : .primary)
+            Image(systemName: hasJournal ? "book.closed.fill" : hasMemory ? "location.fill" : "circle.fill")
+                .font(.system(size: hasJournal || hasMemory ? 8 : 3, weight: .semibold))
+                .foregroundStyle(hasJournal ? Color.accentColor : hasMemory ? Color.secondary : Color.clear)
         }
         .frame(maxWidth: .infinity, minHeight: 44)
-        .background(hasJournal ? Color.accentColor : Color.clear, in: .rect(cornerRadius: 12))
+        .background(
+            hasJournal
+                ? Color.accentColor.opacity(0.14)
+                : hasMemory
+                    ? Color(.secondarySystemFill)
+                    : Color(.tertiarySystemFill).opacity(0.5),
+            in: .rect(cornerRadius: 12)
+        )
         .overlay {
             if Calendar.current.isDateInToday(date) {
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.accentColor, lineWidth: 1.5)
+                    .stroke(Color.accentColor, lineWidth: 2)
             }
         }
         .contentShape(Rectangle())
@@ -229,6 +290,7 @@ private struct DayCell: View {
         var parts = [date.formatted(.dateTime.month().day().locale(Locale(identifier: "ja_JP")))]
         if hasMemory { parts.append("位置の手がかりあり") }
         if hasJournal { parts.append("日記あり") }
+        parts.append("開く")
         return parts.joined(separator: "、")
     }
 }
@@ -274,7 +336,7 @@ private struct RecentDaysList: View {
                         NavigationLink(value: day) {
                             RecentDayRow(day: day, episodes: episodes, journals: journals)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.daytraceRowLink)
                         .hoverEffect(.highlight)
 
                         if index < recentDays.count - 1 {
@@ -345,9 +407,12 @@ private struct RecentDayRow: View {
 
             Spacer(minLength: 4)
 
-            Image(systemName: "chevron.right")
-                .font(.caption.bold())
-                .foregroundStyle(.tertiary)
+            Text("開く")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tint)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(Color.accentColor.opacity(0.12), in: .capsule)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, DS.cardPadding)
@@ -431,7 +496,7 @@ private struct HistorySearchResults: View {
                     NavigationLink(value: result.day) {
                         SearchDayRow(result: result)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.daytraceRowLink)
                     .hoverEffect(.highlight)
                 }
             }
@@ -455,35 +520,46 @@ private struct SearchDayRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let displayDate {
-                Text(displayDate.formatted(.dateTime.year().month().day().weekday(.short).locale(Locale(identifier: "ja_JP"))))
-                    .font(.subheadline.weight(.semibold))
-            }
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let displayDate {
+                    Text(displayDate.formatted(.dateTime.year().month().day().weekday(.short).locale(Locale(identifier: "ja_JP"))))
+                        .font(.subheadline.weight(.semibold))
+                }
 
-            if !result.episodes.isEmpty {
-                Text(result.episodes.map(\.title).joined(separator: " → "))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-
-            if let journal = result.journal {
-                Text(journal.body)
-                    .font(.body)
-                    .lineLimit(3)
-            }
-
-            ForEach(result.notes.prefix(2), id: \.id) { note in
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Image(systemName: "note.text")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(note.body)
+                if !result.episodes.isEmpty {
+                    Text(result.episodes.map(\.title).joined(separator: " → "))
                         .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
+
+                if let journal = result.journal {
+                    Text(journal.body)
+                        .font(.body)
+                        .lineLimit(3)
+                }
+
+                ForEach(result.notes.prefix(2), id: \.id) { note in
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Image(systemName: "note.text")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(note.body)
+                            .font(.subheadline)
+                            .lineLimit(2)
+                    }
+                }
             }
+
+            Spacer(minLength: 4)
+
+            Text("開く")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tint)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(Color.accentColor.opacity(0.12), in: .capsule)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.cardPadding)

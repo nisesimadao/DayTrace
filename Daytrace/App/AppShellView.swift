@@ -20,13 +20,13 @@ struct AppShellView: View {
     var body: some View {
         GeometryReader { geometry in
             TabView(selection: $selectedTab) {
-                Tab("今日", systemImage: "clock", value: AppTab.today) {
+                Tab("今日", systemImage: "sun.max", value: AppTab.today) {
                     NavigationStack {
                         TodayView()
                     }
                 }
 
-                Tab("履歴", systemImage: "book.closed", value: AppTab.history) {
+                Tab("履歴", systemImage: "calendar", value: AppTab.history) {
                     NavigationStack {
                         HistoryRootView()
                     }
