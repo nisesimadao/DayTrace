@@ -40,6 +40,7 @@ struct DayTimeline: View {
             ForEach(Array(episodes.enumerated()), id: \.element.id) { index, episode in
                 TimelineEpisodeRow(
                     episode: episode,
+                    mapSequenceNumber: mapSequenceNumbers[episode.id],
                     isSelected: selectedEpisodeID == episode.id,
                     drawsTopLine: index > 0,
                     drawsBottomLine: index < episodes.count - 1 || connectsToCurrentLocation,
@@ -65,10 +66,23 @@ struct DayTimeline: View {
         }
         .animation(reduceMotion ? nil : .snappy, value: selectedEpisodeID)
     }
+
+    private var mapSequenceNumbers: [UUID: Int] {
+        var nextNumber = 1
+        var numbers: [UUID: Int] = [:]
+
+        for episode in episodes
+        where episode.kind == .stay && episode.latitude != nil && episode.longitude != nil {
+            numbers[episode.id] = nextNumber
+            nextNumber += 1
+        }
+        return numbers
+    }
 }
 
 private struct TimelineEpisodeRow: View {
     let episode: TimelineEpisode
+    let mapSequenceNumber: Int?
     let isSelected: Bool
     let drawsTopLine: Bool
     let drawsBottomLine: Bool
@@ -165,7 +179,10 @@ private struct TimelineEpisodeRow: View {
                 }
 
                 if canShowOnMap {
-                    Label(isSelected ? "地図で表示中" : "地図で見る", systemImage: isSelected ? "checkmark.circle.fill" : "map")
+                    Label(
+                        mapLinkTitle,
+                        systemImage: isSelected ? "checkmark.circle.fill" : "map"
+                    )
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tint)
                         .padding(.top, 3)
@@ -174,6 +191,15 @@ private struct TimelineEpisodeRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, episode.kind == .stay ? 30 : 22)
         }
+    }
+
+    private var mapLinkTitle: String {
+        guard let mapSequenceNumber else {
+            return isSelected ? "地図で表示中" : "地図で見る"
+        }
+        return isSelected
+            ? "地図の\(mapSequenceNumber)番を表示中"
+            : "地図の\(mapSequenceNumber)番を見る"
     }
 
     private var openEndedStatus: String {
@@ -194,6 +220,7 @@ private struct TimelineEpisodeRow: View {
 struct CurrentLocationTimelineRow: View {
     let currentLocation: CurrentLocationContext
     let placeName: String
+    let mapSequenceNumber: Int
     let connectsFromPrevious: Bool
 
     var body: some View {
@@ -235,7 +262,7 @@ struct CurrentLocationTimelineRow: View {
                         .font(.body.weight(.semibold))
 
                     Text("いま")
-                        .font(.caption2.bold())
+                        .font(.caption.bold())
                         .foregroundStyle(.tint)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -246,7 +273,7 @@ struct CurrentLocationTimelineRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Label("滞在判定中", systemImage: "location.fill")
+                Label("地図の\(mapSequenceNumber)番・滞在判定中", systemImage: "location.fill")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tint)
             }

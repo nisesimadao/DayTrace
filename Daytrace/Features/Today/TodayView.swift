@@ -15,6 +15,7 @@ struct TodayView: View {
 
     @State private var selectedEpisodeID: UUID?
     @State private var isSettingsPresented: Bool
+    @State private var isMapExpanded = false
     @State private var stayEditSelection: StayEditSelection?
     @State private var undoSuppressedEpisodeID: UUID?
     @State private var isTimelineErrorPresented = false
@@ -71,6 +72,12 @@ struct TodayView: View {
         } || provisionalCurrentLocation != nil
     }
 
+    private var currentMapSequenceNumber: Int {
+        todayEpisodes.count {
+            $0.kind == .stay && $0.latitude != nil && $0.longitude != nil
+        } + 1
+    }
+
     private var todayJournal: JournalEntry? {
         journals.first { $0.dayAnchor >= day.start && $0.dayAnchor < day.end }
     }
@@ -96,7 +103,8 @@ struct TodayView: View {
                     DayMap(
                         episodes: todayEpisodes,
                         currentLocation: provisionalCurrentLocation,
-                        selectedEpisodeID: $selectedEpisodeID
+                        selectedEpisodeID: $selectedEpisodeID,
+                        onExpand: showExpandedMap
                     )
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
@@ -121,6 +129,7 @@ struct TodayView: View {
                     CurrentLocationTimelineRow(
                         currentLocation: provisionalCurrentLocation,
                         placeName: currentLocationName,
+                        mapSequenceNumber: currentMapSequenceNumber,
                         connectsFromPrevious: !todayEpisodes.isEmpty
                     )
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -139,6 +148,14 @@ struct TodayView: View {
         }
         .sheet(item: $stayEditSelection) { selection in
             StayEditorSheet(episode: selection.episode)
+        }
+        .fullScreenCover(isPresented: $isMapExpanded) {
+            ExpandedDayMapView(
+                title: "今日の足あと",
+                episodes: todayEpisodes,
+                currentLocation: provisionalCurrentLocation,
+                selectedEpisodeID: $selectedEpisodeID
+            )
         }
         .navigationDestination(for: CalendarDay.self) { day in
             HistoricalDayDetailView(day: day)
@@ -189,6 +206,10 @@ struct TodayView: View {
             timelineErrorMessage = error.localizedDescription
             isTimelineErrorPresented = true
         }
+    }
+
+    private func showExpandedMap() {
+        isMapExpanded = true
     }
 
     private func restoreSuppressed(_ episodeID: UUID) {

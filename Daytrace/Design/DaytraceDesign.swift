@@ -6,7 +6,7 @@ enum DS {
     static let compactSpacing: CGFloat = 10
     static let timelineDot: CGFloat = 12
     static let timelineLine: CGFloat = 2
-    static let mapHeight: CGFloat = 142
+    static let mapHeight: CGFloat = 190
 
     static let contentCornerRadius: CGFloat = 22
     static let controlCornerRadius: CGFloat = 18

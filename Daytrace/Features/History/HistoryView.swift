@@ -632,6 +632,7 @@ struct HistoricalDayDetailView: View {
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
 
     @State private var selectedEpisodeID: UUID?
+    @State private var isMapExpanded = false
     @State private var stayEditSelection: HistoricalStayEditSelection?
 
     private var suppressedEpisodeIDs: Set<UUID> {
@@ -701,7 +702,8 @@ struct HistoricalDayDetailView: View {
                 if hasLocatableStay {
                     DayMap(
                         episodes: dayEpisodes,
-                        selectedEpisodeID: $selectedEpisodeID
+                        selectedEpisodeID: $selectedEpisodeID,
+                        onExpand: showExpandedMap
                     )
                 }
 
@@ -744,6 +746,18 @@ struct HistoricalDayDetailView: View {
                 rebuildHistoricalTransitions: true
             )
         }
+        .fullScreenCover(isPresented: $isMapExpanded) {
+            ExpandedDayMapView(
+                title: "この日の足あと",
+                episodes: dayEpisodes,
+                currentLocation: nil,
+                selectedEpisodeID: $selectedEpisodeID
+            )
+        }
+    }
+
+    private func showExpandedMap() {
+        isMapExpanded = true
     }
 }
 

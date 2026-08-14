@@ -2,42 +2,230 @@ import MapKit
 import SwiftUI
 
 struct DayMap: View {
+    let episodes: [TimelineEpisode]
+    let currentLocation: CurrentLocationContext?
+    @Binding var selectedEpisodeID: UUID?
+    let onExpand: (() -> Void)?
+
+    init(
+        episodes: [TimelineEpisode],
+        currentLocation: CurrentLocationContext? = nil,
+        selectedEpisodeID: Binding<UUID?>,
+        onExpand: (() -> Void)? = nil
+    ) {
+        self.episodes = episodes
+        self.currentLocation = currentLocation
+        _selectedEpisodeID = selectedEpisodeID
+        self.onExpand = onExpand
+    }
+
+    private var pointCount: Int {
+        episodes.count {
+            $0.kind == .stay && $0.latitude != nil && $0.longitude != nil
+        } + (currentLocation == nil ? 0 : 1)
+    }
+
+    private var routeDescription: String {
+        if pointCount >= 2 {
+            "\(pointCount)地点を時系列の直線で表示"
+        } else {
+            "記録された地点を表示"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.compactSpacing) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("足あとマップ", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .font(.headline)
+
+                Spacer()
+
+                Text(routeDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+            }
+
+            ZStack(alignment: .bottomTrailing) {
+                DayMapCanvas(
+                    episodes: episodes,
+                    currentLocation: currentLocation,
+                    selectedEpisodeID: $selectedEpisodeID,
+                    interactionModes: onExpand == nil ? [.pan, .zoom] : []
+                )
+                .allowsHitTesting(onExpand == nil)
+
+                if let onExpand {
+                    Button(action: onExpand) {
+                        ZStack(alignment: .bottomTrailing) {
+                            Color.clear
+
+                            Label("拡大", systemImage: "arrow.up.left.and.arrow.down.right")
+                                .font(.subheadline.bold())
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 9)
+                                .background(.regularMaterial, in: .capsule)
+                                .padding(10)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("足あとマップを拡大")
+                    .accessibilityHint("全画面の地図で地点と移動順を確認します")
+                }
+            }
+            .frame(height: DS.mapHeight)
+            .clipShape(.rect(cornerRadius: DS.contentCornerRadius))
+            .overlay {
+                RoundedRectangle(cornerRadius: DS.contentCornerRadius)
+                    .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+struct ExpandedDayMapView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let title: String
+    let episodes: [TimelineEpisode]
+    let currentLocation: CurrentLocationContext?
+    @Binding var selectedEpisodeID: UUID?
+
+    private var selectedEpisode: TimelineEpisode? {
+        guard let selectedEpisodeID else { return nil }
+        return episodes.first { $0.id == selectedEpisodeID }
+    }
+
+    private var locatablePointCount: Int {
+        episodes.count {
+            $0.kind == .stay && $0.latitude != nil && $0.longitude != nil
+        } + (currentLocation == nil ? 0 : 1)
+    }
+
+    var body: some View {
+        NavigationStack {
+            DayMapCanvas(
+                episodes: episodes,
+                currentLocation: currentLocation,
+                selectedEpisodeID: $selectedEpisodeID,
+                interactionModes: [.pan, .zoom]
+            )
+            .ignoresSafeArea(edges: .bottom)
+            .safeAreaInset(edge: .bottom) {
+                ExpandedMapStatusCard(
+                    pointCount: locatablePointCount,
+                    selectedEpisode: selectedEpisode
+                )
+                .padding(.horizontal, DS.horizontalPadding)
+                .padding(.bottom, 8)
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる", systemImage: "xmark", action: dismiss.callAsFunction)
+                }
+            }
+        }
+    }
+}
+
+private struct ExpandedMapStatusCard: View {
+    let pointCount: Int
+    let selectedEpisode: TimelineEpisode?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let selectedEpisode {
+                Text(selectedEpisode.title)
+                    .font(.headline)
+
+                Text(
+                    selectedEpisode.startDate,
+                    format: .dateTime.hour().minute()
+                )
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
+            } else {
+                Label(
+                    pointCount >= 2 ? "番号順に、地点間を直線で表示" : "記録された地点を表示",
+                    systemImage: "map"
+                )
+                .font(.subheadline)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DS.cardPadding)
+        .daytraceGlassSurface()
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct DayMapCanvas: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let episodes: [TimelineEpisode]
     let currentLocation: CurrentLocationContext?
     @Binding var selectedEpisodeID: UUID?
-
-    init(
-        episodes: [TimelineEpisode],
-        currentLocation: CurrentLocationContext? = nil,
-        selectedEpisodeID: Binding<UUID?>
-    ) {
-        self.episodes = episodes
-        self.currentLocation = currentLocation
-        _selectedEpisodeID = selectedEpisodeID
-    }
+    let interactionModes: MapInteractionModes
 
     @State private var position: MapCameraPosition = .automatic
 
     private var locatableEpisodes: [TimelineEpisode] {
-        episodes.filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
+        episodes
+            .filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
+            .sorted { $0.startDate < $1.startDate }
+    }
+
+    private var routeCoordinates: [CLLocationCoordinate2D] {
+        var coordinates = locatableEpisodes.compactMap { episode -> CLLocationCoordinate2D? in
+            guard let latitude = episode.latitude, let longitude = episode.longitude else {
+                return nil
+            }
+            return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        }
+
+        if let currentLocation {
+            coordinates.append(CLLocationCoordinate2D(
+                latitude: currentLocation.latitude,
+                longitude: currentLocation.longitude
+            ))
+        }
+        return coordinates
     }
 
     var body: some View {
-        Map(position: $position, interactionModes: [.pan, .zoom]) {
-            ForEach(locatableEpisodes) { episode in
+        Map(position: $position, interactionModes: interactionModes) {
+            if routeCoordinates.count >= 2 {
+                MapPolyline(coordinates: routeCoordinates, contourStyle: .straight)
+                    .stroke(
+                        Color(.systemBackground).opacity(0.82),
+                        style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
+                    )
+
+                MapPolyline(coordinates: routeCoordinates, contourStyle: .straight)
+                    .stroke(
+                        Color.accentColor.opacity(0.72),
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
+                    )
+            }
+
+            ForEach(locatableEpisodes.indices, id: \.self) { index in
+                let episode = locatableEpisodes[index]
                 if let latitude = episode.latitude, let longitude = episode.longitude {
                     Annotation(
                         episode.title,
                         coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
                     ) {
                         Button {
-                            withAnimation(reduceMotion ? nil : .snappy) {
-                                selectedEpisodeID = episode.id
-                            }
+                            select(episode)
                         } label: {
                             DayMapMarker(
+                                index: index + 1,
                                 isSelected: selectedEpisodeID == episode.id,
                                 confidence: episode.confidence
                             )
@@ -45,7 +233,7 @@ struct DayMap: View {
                             .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(episode.title)を選択")
+                        .accessibilityLabel("\(index + 1)番目、\(episode.title)を選択")
                     }
                 }
             }
@@ -58,22 +246,22 @@ struct DayMap: View {
                         longitude: currentLocation.longitude
                     )
                 ) {
-                    CurrentLocationMapMarker()
-                        .accessibilityLabel("現在地")
+                    CurrentLocationMapMarker(index: locatableEpisodes.count + 1)
+                        .accessibilityLabel("\(locatableEpisodes.count + 1)番目、現在地")
                 }
             }
         }
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
-        .frame(height: DS.mapHeight)
-        .clipShape(RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
-                .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
-        }
         .onChange(of: selectedEpisodeID) { _, selectedID in
             focusMap(on: selectedID)
         }
         .sensoryFeedback(.selection, trigger: selectedEpisodeID)
+    }
+
+    private func select(_ episode: TimelineEpisode) {
+        withAnimation(reduceMotion ? nil : .snappy) {
+            selectedEpisodeID = episode.id
+        }
     }
 
     private func focusMap(on episodeID: UUID?) {
@@ -98,32 +286,44 @@ struct DayMap: View {
 }
 
 private struct CurrentLocationMapMarker: View {
+    let index: Int
+
     var body: some View {
         ZStack {
             Circle()
-                .fill(.tint.opacity(0.16))
+                .fill(.tint.opacity(0.18))
                 .frame(width: 40, height: 40)
 
             Circle()
                 .fill(Color(.systemBackground))
-                .frame(width: 25, height: 25)
+                .frame(width: 29, height: 29)
                 .shadow(radius: 3, y: 1)
 
-            Circle()
-                .fill(.tint)
-                .frame(width: 15, height: 15)
+            Text(index, format: .number)
+                .font(.caption.bold())
+                .foregroundStyle(.tint)
         }
         .frame(width: 44, height: 44)
+        .overlay(alignment: .topTrailing) {
+            Circle()
+                .fill(.tint)
+                .frame(width: 9, height: 9)
+                .overlay {
+                    Circle().stroke(Color(.systemBackground), lineWidth: 2)
+                }
+        }
     }
 }
 
 private struct DayMapMarker: View {
+    let index: Int
     let isSelected: Bool
     let confidence: EpisodeConfidence
 
-    private var outerSize: CGFloat { isSelected ? 34 : 28 }
-    private var innerSize: CGFloat { isSelected ? 18 : 14 }
-    private var innerColor: Color { confidence == .low ? .secondary : .accentColor }
+    private var outerSize: CGFloat { isSelected ? 36 : 31 }
+    private var foregroundStyle: Color {
+        confidence == .low ? .secondary : .accentColor
+    }
 
     var body: some View {
         ZStack {
@@ -133,8 +333,12 @@ private struct DayMapMarker: View {
                 .shadow(radius: 3, y: 1)
 
             Circle()
-                .fill(innerColor)
-                .frame(width: innerSize, height: innerSize)
+                .stroke(foregroundStyle, lineWidth: isSelected ? 3 : 2)
+                .frame(width: outerSize - 5, height: outerSize - 5)
+
+            Text(index, format: .number)
+                .font(.caption.bold())
+                .foregroundStyle(foregroundStyle)
         }
     }
 }
