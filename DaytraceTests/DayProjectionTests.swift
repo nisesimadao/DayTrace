@@ -884,7 +884,7 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
-    func testPreviewRouteDoesNotAppendCurrentLocationEveryRefresh() throws {
+    func testPreviewRouteKeepsCurrentLocationConnection() throws {
         let firstStay = timelineStay(
             start: baseTime,
             end: baseTime.addingTimeInterval(60 * 60),
@@ -907,7 +907,7 @@ final class DayProjectionTests: XCTestCase {
             options: .preview
         )
 
-        XCTAssertEqual(points.map(\.kind), [.stay])
+        XCTAssertEqual(points.map(\.kind), [.stay, .currentLocation])
     }
 
     @MainActor

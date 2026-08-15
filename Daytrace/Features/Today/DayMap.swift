@@ -109,8 +109,25 @@ struct ExpandedDayMapView: View {
     let routeLocations: [LocationEvidence]
     let currentLocation: CurrentLocationContext?
     @Binding var selectedEpisodeID: UUID?
+    let onRegisterCurrentLocation: (() -> Void)?
 
     @State private var currentLocationFocusRequest = 0
+
+    init(
+        title: String,
+        episodes: [TimelineEpisode],
+        routeLocations: [LocationEvidence],
+        currentLocation: CurrentLocationContext?,
+        selectedEpisodeID: Binding<UUID?>,
+        onRegisterCurrentLocation: (() -> Void)? = nil
+    ) {
+        self.title = title
+        self.episodes = episodes
+        self.routeLocations = routeLocations
+        self.currentLocation = currentLocation
+        _selectedEpisodeID = selectedEpisodeID
+        self.onRegisterCurrentLocation = onRegisterCurrentLocation
+    }
 
     private var locatablePointCount: Int {
         episodes.count {
@@ -137,7 +154,8 @@ struct ExpandedDayMapView: View {
                     currentLocation: currentLocation,
                     selectedEpisodeID: selectedEpisodeID,
                     select: select,
-                    focusCurrentLocation: focusCurrentLocation
+                    focusCurrentLocation: focusCurrentLocation,
+                    registerCurrentLocation: onRegisterCurrentLocation
                 )
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 8)
@@ -175,25 +193,26 @@ private struct ExpandedMapTimelinePanel: View {
     let selectedEpisodeID: UUID?
     let select: (TimelineEpisode) -> Void
     let focusCurrentLocation: () -> Void
+    let registerCurrentLocation: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(
-                pointCount >= 2 ? "番号順に、地点間を直線で表示" : "記録された地点を表示",
-                systemImage: "map"
-            )
-            .font(.subheadline.weight(.semibold))
+            HStack {
+                Label(
+                    pointCount >= 2 ? "タイムライン順" : "記録された地点",
+                    systemImage: "map"
+                )
+                .font(.subheadline.weight(.semibold))
+
+                Spacer()
+
+                Text("\(pointCount)地点")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
 
             ScrollView {
-                LazyVStack(spacing: 8) {
-                    if let currentLocation {
-                        ExpandedMapCurrentLocationRow(
-                            currentLocation: currentLocation,
-                            index: episodes.count + 1,
-                            action: focusCurrentLocation
-                        )
-                    }
-
+                LazyVStack(spacing: 0) {
                     if episodes.isEmpty {
                         Text("タイムラインに地点が入ると、ここから地図を移動できます。")
                             .font(.caption)
@@ -211,12 +230,27 @@ private struct ExpandedMapTimelinePanel: View {
                             }
                         }
                     }
+
+                    if let currentLocation {
+                        if !episodes.isEmpty {
+                            Divider()
+                                .padding(.leading, 48)
+                        }
+
+                        ExpandedMapCurrentLocationRow(
+                            currentLocation: currentLocation,
+                            index: episodes.count + 1,
+                            focus: focusCurrentLocation,
+                            register: registerCurrentLocation
+                        )
+                    }
                 }
             }
             .frame(maxHeight: 260)
+            .background(Color(.secondarySystemGroupedBackground).opacity(0.72), in: .rect(cornerRadius: 18))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(DS.cardPadding)
+        .padding(14)
         .daytraceGlassSurface()
     }
 }
@@ -224,18 +258,40 @@ private struct ExpandedMapTimelinePanel: View {
 private struct ExpandedMapCurrentLocationRow: View {
     let currentLocation: CurrentLocationContext
     let index: Int
-    let action: () -> Void
+    let focus: () -> Void
+    let register: (() -> Void)?
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                CurrentLocationMapMarker(index: index)
-                    .frame(width: 40, height: 40)
+        HStack(alignment: .top, spacing: 12) {
+            Text(index, format: .number)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(Color(.tertiarySystemGroupedBackground), in: .circle)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Button(action: focus) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(TimelineFormatting.clock(
+                            currentLocation.startDate,
+                            timeZoneIdentifier: currentLocation.timeZoneIdentifier
+                        ))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+
+                        Text("現在地")
+                            .font(.subheadline.weight(.semibold))
+
+                        Spacer(minLength: 8)
+
+                        Image(systemName: "scope")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("現在地")
-                        .font(.subheadline.weight(.semibold))
-
                     Text("少なくとも \(TimelineFormatting.clock(currentLocation.startDate, timeZoneIdentifier: currentLocation.timeZoneIdentifier)) から")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -245,20 +301,18 @@ private struct ExpandedMapCurrentLocationRow: View {
                         .foregroundStyle(.tertiary)
                 }
 
-                Spacer(minLength: 8)
-
-                Image(systemName: "scope")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.tint)
-            }
-            .padding(12)
-            .background(Color.accentColor.opacity(0.12), in: .rect(cornerRadius: 18))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18)
-                    .strokeBorder(Color.accentColor.opacity(0.28), lineWidth: 1)
+                if let register {
+                    Button(action: register) {
+                        Label("ここを滞在として登録", systemImage: "plus.circle")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
         .accessibilityLabel("現在地へ移動")
     }
 }
@@ -271,31 +325,34 @@ private struct ExpandedMapTimelineRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
                 Text(index, format: .number)
-                    .font(.caption.bold())
-                    .foregroundStyle(isSelected ? Color(.systemBackground) : Color.accentColor)
-                    .frame(width: 26, height: 26)
-                    .background(isSelected ? Color.accentColor : Color.accentColor.opacity(0.12), in: .circle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Color(.tertiarySystemGroupedBackground), in: .circle)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(episode.title)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(TimelineFormatting.clock(
                             episode.startDate,
                             timeZoneIdentifier: episode.timeZoneIdentifier
                         ))
                         .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+
+                        Text(episode.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+
+                        Spacer(minLength: 8)
 
                         if let duration = TimelineFormatting.duration(from: episode.startDate, to: episode.endDate) {
                             Text(duration)
-                                .font(.caption)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    .foregroundStyle(.secondary)
 
                     if let subtitle = episode.subtitle, !subtitle.isEmpty {
                         Text(subtitle)
@@ -311,15 +368,9 @@ private struct ExpandedMapTimelineRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(12)
-            .background(
-                isSelected ? Color.accentColor.opacity(0.14) : Color(.secondarySystemBackground).opacity(0.74),
-                in: .rect(cornerRadius: 18)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 18)
-                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.48) : Color.primary.opacity(0.08), lineWidth: 1)
-            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .background(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(index)番目、\(episode.title)へ移動")

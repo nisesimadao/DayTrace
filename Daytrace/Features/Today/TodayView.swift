@@ -177,7 +177,8 @@ struct TodayView: View {
                         currentLocation: provisionalCurrentLocation,
                         placeName: currentLocationName,
                         mapSequenceNumber: currentMapSequenceNumber,
-                        connectsFromPrevious: !todayEpisodes.isEmpty
+                        connectsFromPrevious: !todayEpisodes.isEmpty,
+                        onRegisterStay: registerCurrentLocationAsStay
                     )
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
@@ -202,7 +203,8 @@ struct TodayView: View {
                 episodes: todayEpisodes,
                 routeLocations: todayPreviewRouteLocations,
                 currentLocation: mapCurrentLocation,
-                selectedEpisodeID: $selectedEpisodeID
+                selectedEpisodeID: $selectedEpisodeID,
+                onRegisterCurrentLocation: registerCurrentLocationAsStay
             )
         }
         .navigationDestination(for: CalendarDay.self) { day in
@@ -258,6 +260,50 @@ struct TodayView: View {
 
     private func showExpandedMap() {
         isMapExpanded = true
+    }
+
+    private func registerCurrentLocationAsStay() {
+        guard let currentLocation = provisionalCurrentLocation else { return }
+
+        let title = currentLocationName == "現在地" ? "未設定の場所" : currentLocationName
+        let episode = TimelineEpisode(
+            kind: .stay,
+            startDate: currentLocation.startDate,
+            endDate: nil,
+            title: title,
+            subtitle: "手動で追加",
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude,
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: currentLocation.timeZoneIdentifier
+        )
+
+        do {
+            modelContext.insert(episode)
+            modelContext.insert(UserAssertion(
+                episodeID: episode.id,
+                type: .reposition,
+                replacementLatitude: currentLocation.latitude,
+                replacementLongitude: currentLocation.longitude
+            ))
+            if title != "未設定の場所" {
+                modelContext.insert(UserAssertion(
+                    episodeID: episode.id,
+                    type: .rename,
+                    replacementTitle: title
+                ))
+            }
+            try modelContext.save()
+            selectedEpisodeID = episode.id
+            isMapExpanded = false
+            DispatchQueue.main.async {
+                stayEditSelection = StayEditSelection(episode: episode)
+            }
+        } catch {
+            timelineErrorMessage = error.localizedDescription
+            isTimelineErrorPresented = true
+        }
     }
 
     private var trackingHealthAction: TrackingHealthBanner.Action? {

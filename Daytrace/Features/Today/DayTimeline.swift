@@ -222,6 +222,7 @@ struct CurrentLocationTimelineRow: View {
     let placeName: String
     let mapSequenceNumber: Int
     let connectsFromPrevious: Bool
+    let onRegisterStay: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -276,11 +277,19 @@ struct CurrentLocationTimelineRow: View {
                 Label("地図の\(mapSequenceNumber)番・滞在判定中", systemImage: "location.fill")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tint)
+
+                Button(action: onRegisterStay) {
+                    Label("ここを滞在として登録", systemImage: "plus.circle")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .padding(.top, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 26)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(
             "現在地、\(placeName)、少なくとも\(TimelineFormatting.clock(currentLocation.startDate, timeZoneIdentifier: currentLocation.timeZoneIdentifier))から、滞在判定中"
         )

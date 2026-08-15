@@ -31,7 +31,7 @@ enum DayRouteProjection {
             maximumSamplesPerSegment: 28,
             minimumSampleInterval: 20,
             minimumSampleDistance: 180,
-            includesCurrentLocationInRoute: false
+            includesCurrentLocationInRoute: true
         )
 
         static let detail = Options(
