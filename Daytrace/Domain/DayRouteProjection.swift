@@ -21,13 +21,34 @@ struct DayRoutePoint: Identifiable, Sendable {
 
 @MainActor
 enum DayRouteProjection {
+    struct Options: Equatable, Sendable {
+        var maximumSamplesPerSegment: Int
+        var minimumSampleInterval: TimeInterval
+        var minimumSampleDistance: CLLocationDistance
+        var includesCurrentLocationInRoute: Bool
+
+        static let preview = Options(
+            maximumSamplesPerSegment: 28,
+            minimumSampleInterval: 20,
+            minimumSampleDistance: 180,
+            includesCurrentLocationInRoute: false
+        )
+
+        static let detail = Options(
+            maximumSamplesPerSegment: 120,
+            minimumSampleInterval: 5,
+            minimumSampleDistance: 45,
+            includesCurrentLocationInRoute: true
+        )
+    }
+
     private static let maximumRouteSampleAccuracy: CLLocationAccuracy = 1_000
-    private static let maximumSamplesPerSegment = 80
 
     static func points(
         episodes: [TimelineEpisode],
         locationEvidence: [LocationEvidence],
-        currentLocation: CurrentLocationContext? = nil
+        currentLocation: CurrentLocationContext? = nil,
+        options: Options = .detail
     ) -> [DayRoutePoint] {
         let stays = episodes
             .filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
@@ -53,19 +74,21 @@ enum DayRouteProjection {
                 points.append(contentsOf: samples(
                     from: usableSamples,
                     start: departure,
-                    end: pair.1.startDate
+                    end: pair.1.startDate,
+                    options: options
                 ))
             }
             points.append(point(for: pair.1))
         }
 
-        if let currentLocation {
+        if let currentLocation, options.includesCurrentLocationInRoute {
             let lastStay = stays[stays.count - 1]
             let routeStart = lastStay.endDate ?? lastStay.startDate
             points.append(contentsOf: samples(
                 from: usableSamples,
                 start: routeStart,
-                end: currentLocation.lastEvidenceAt
+                end: currentLocation.lastEvidenceAt,
+                options: options
             ))
             points.append(point(for: currentLocation))
         }
@@ -76,12 +99,14 @@ enum DayRouteProjection {
     static func movementSampleCount(
         episodes: [TimelineEpisode],
         locationEvidence: [LocationEvidence],
-        currentLocation: CurrentLocationContext? = nil
+        currentLocation: CurrentLocationContext? = nil,
+        options: Options = .detail
     ) -> Int {
         points(
             episodes: episodes,
             locationEvidence: locationEvidence,
-            currentLocation: currentLocation
+            currentLocation: currentLocation,
+            options: options
         )
         .count { $0.kind == .movementSample }
     }
@@ -89,12 +114,18 @@ enum DayRouteProjection {
     private static func samples(
         from evidence: [LocationEvidence],
         start: Date,
-        end: Date
+        end: Date,
+        options: Options
     ) -> [DayRoutePoint] {
         guard end > start else { return [] }
 
         let samples = evidence.filter { $0.timestamp > start && $0.timestamp < end }
-        let decimatedSamples = decimate(samples, maximumCount: maximumSamplesPerSegment)
+        let thinnedSamples = thin(
+            samples,
+            minimumInterval: options.minimumSampleInterval,
+            minimumDistance: options.minimumSampleDistance
+        )
+        let decimatedSamples = decimate(thinnedSamples, maximumCount: options.maximumSamplesPerSegment)
         return decimatedSamples.map { sample in
             DayRoutePoint(
                 id: "sample-\(sample.id.uuidString)",
@@ -104,6 +135,35 @@ enum DayRouteProjection {
                 longitude: sample.longitude
             )
         }
+    }
+
+    private static func thin(
+        _ samples: [LocationEvidence],
+        minimumInterval: TimeInterval,
+        minimumDistance: CLLocationDistance
+    ) -> [LocationEvidence] {
+        guard let first = samples.first else { return [] }
+
+        var thinned = [first]
+        var lastAccepted = first
+
+        for sample in samples.dropFirst() {
+            let elapsed = sample.timestamp.timeIntervalSince(lastAccepted.timestamp)
+            let distance = CLLocation(latitude: sample.latitude, longitude: sample.longitude).distance(
+                from: CLLocation(latitude: lastAccepted.latitude, longitude: lastAccepted.longitude)
+            )
+            guard elapsed >= minimumInterval || distance >= minimumDistance else {
+                continue
+            }
+            thinned.append(sample)
+            lastAccepted = sample
+        }
+
+        if let last = samples.last, thinned.last?.id != last.id {
+            thinned.append(last)
+        }
+
+        return thinned
     }
 
     private static func decimate(

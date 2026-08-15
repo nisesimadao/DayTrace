@@ -1,3 +1,4 @@
+import CoreLocation
 import SwiftData
 import SwiftUI
 import UIKit
@@ -44,6 +45,24 @@ struct TodayView: View {
             !suppressedEpisodeIDs.contains($0.id)
                 && day.intersects(start: $0.startDate, end: $0.endDate)
         }
+    }
+
+    private var todayRouteLocations: [LocationEvidence] {
+        locationEvidence.filter {
+            $0.timestamp >= day.start && $0.timestamp < day.end
+        }
+    }
+
+    private var todayPreviewRouteLocations: [LocationEvidence] {
+        let stays = todayEpisodes
+            .filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
+            .sorted { $0.startDate < $1.startDate }
+
+        guard stays.count >= 2, let latestCompletedRouteEnd = stays.last?.startDate else {
+            return []
+        }
+
+        return todayRouteLocations.filter { $0.timestamp < latestCompletedRouteEnd }
     }
 
     private var currentLocation: CurrentLocationContext? {
@@ -105,7 +124,7 @@ struct TodayView: View {
                 if hasMapContent {
                     DayMap(
                         episodes: todayEpisodes,
-                        routeLocations: locationEvidence,
+                        routeLocations: todayPreviewRouteLocations,
                         currentLocation: provisionalCurrentLocation,
                         selectedEpisodeID: $selectedEpisodeID,
                         onExpand: showExpandedMap
@@ -145,7 +164,7 @@ struct TodayView: View {
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: recorder.health == .healthy)
         .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: hasMapContent)
-        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: provisionalCurrentLocation)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: provisionalCurrentLocation != nil)
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isSettingsPresented) {
             SettingsView()
@@ -157,7 +176,7 @@ struct TodayView: View {
             ExpandedDayMapView(
                 title: "今日の足あと",
                 episodes: todayEpisodes,
-                routeLocations: locationEvidence,
+                routeLocations: todayRouteLocations,
                 currentLocation: provisionalCurrentLocation,
                 selectedEpisodeID: $selectedEpisodeID
             )
@@ -454,6 +473,7 @@ struct StayEditorSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \TimelineEpisode.startDate) private var allEpisodes: [TimelineEpisode]
     @Query(sort: \UserAssertion.createdAt) private var allAssertions: [UserAssertion]
+    @Query(sort: \PlaceRecord.name) private var allPlaces: [PlaceRecord]
 
     @State private var title: String
     @State private var startDate: Date
@@ -464,6 +484,7 @@ struct StayEditorSheet: View {
     @State private var saveErrorMessage: String?
     @State private var selectedLatitude: Double
     @State private var selectedLongitude: Double
+    @State private var selectedMergePlaceID: UUID?
 
     init(episode: TimelineEpisode, rebuildHistoricalTransitions: Bool = false) {
         self.episode = episode
@@ -512,6 +533,23 @@ struct StayEditorSheet: View {
         startDate != episode.startDate || proposedEndDate != episode.endDate
     }
 
+    private var mergeCandidates: [PlaceRecord] {
+        let candidates = allPlaces.filter { $0.id != episode.placeID }
+        guard let latitude = episode.latitude, let longitude = episode.longitude else {
+            return Array(candidates.prefix(12))
+        }
+
+        let episodeLocation = CLLocation(latitude: latitude, longitude: longitude)
+        return candidates
+            .sorted { lhs, rhs in
+                let leftDistance = episodeLocation.distance(from: CLLocation(latitude: lhs.latitude, longitude: lhs.longitude))
+                let rightDistance = episodeLocation.distance(from: CLLocation(latitude: rhs.latitude, longitude: rhs.longitude))
+                return leftDistance < rightDistance
+            }
+            .prefix(12)
+            .map { $0 }
+    }
+
     private var intervalValidationError: TimelineEditingError? {
         guard hasEditedTime else { return nil }
         return StayIntervalValidator.validationError(
@@ -547,6 +585,25 @@ struct StayEditorSheet: View {
                     } else {
                         Toggle("この場所として覚える", isOn: $shouldConfirmLocation)
                             .disabled(trimmedTitle.isEmpty)
+                    }
+                }
+
+                if !mergeCandidates.isEmpty {
+                    Section {
+                        Picker("結合先", selection: $selectedMergePlaceID) {
+                            Text("結合しない").tag(UUID?.none)
+                            ForEach(mergeCandidates) { place in
+                                Text(mergeCandidateTitle(for: place))
+                                    .tag(Optional(place.id))
+                            }
+                        }
+                        .onChange(of: selectedMergePlaceID) { _, placeID in
+                            applyMergeSelection(placeID)
+                        }
+                    } header: {
+                        Text("同じ場所として結合")
+                    } footer: {
+                        Text("同じ場所なのに別名・別地点として出ている場合は、既存の場所へまとめます。再解析後もこの紐付けを優先します。")
                     }
                 }
 
@@ -644,6 +701,7 @@ struct StayEditorSheet: View {
                 latitude: hasEditableCoordinate ? selectedLatitude : nil,
                 longitude: hasEditableCoordinate ? selectedLongitude : nil,
                 confirmLocation: shouldApplyConfirmation,
+                mergePlaceID: selectedMergePlaceID,
                 in: modelContext
             )
             if rebuildHistoricalTransitions {
@@ -670,5 +728,30 @@ struct StayEditorSheet: View {
         } catch {
             saveErrorMessage = error.localizedDescription
         }
+    }
+
+    private func mergeCandidateTitle(for place: PlaceRecord) -> String {
+        guard let latitude = episode.latitude, let longitude = episode.longitude else {
+            return place.name
+        }
+        let distance = CLLocation(latitude: latitude, longitude: longitude).distance(
+            from: CLLocation(latitude: place.latitude, longitude: place.longitude)
+        )
+        if distance < 1_000 {
+            return "\(place.name)（約\(Int(distance))m）"
+        }
+        let kilometers = distance / 1_000
+        return "\(place.name)（約\(String(format: "%.1f", kilometers))km）"
+    }
+
+    private func applyMergeSelection(_ placeID: UUID?) {
+        guard let placeID,
+              let place = allPlaces.first(where: { $0.id == placeID }) else {
+            return
+        }
+        title = place.name
+        selectedLatitude = place.latitude
+        selectedLongitude = place.longitude
+        shouldConfirmLocation = true
     }
 }

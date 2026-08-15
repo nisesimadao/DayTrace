@@ -32,7 +32,8 @@ struct DayMap: View {
         let sampleCount = DayRouteProjection.movementSampleCount(
             episodes: episodes,
             locationEvidence: routeLocations,
-            currentLocation: currentLocation
+            currentLocation: currentLocation,
+            options: .preview
         )
         if sampleCount > 0 {
             return "移動中\(sampleCount)点を含む"
@@ -65,7 +66,8 @@ struct DayMap: View {
                     routeLocations: routeLocations,
                     currentLocation: currentLocation,
                     selectedEpisodeID: $selectedEpisodeID,
-                    interactionModes: onExpand == nil ? [.pan, .zoom] : []
+                    interactionModes: onExpand == nil ? [.pan, .zoom] : [],
+                    routeOptions: .preview
                 )
                 .allowsHitTesting(onExpand == nil)
 
@@ -108,22 +110,6 @@ struct ExpandedDayMapView: View {
     let currentLocation: CurrentLocationContext?
     @Binding var selectedEpisodeID: UUID?
 
-    private var selectedEpisode: TimelineEpisode? {
-        guard let selectedEpisodeID else { return nil }
-        return episodes.first { $0.id == selectedEpisodeID }
-    }
-
-    private var selectedPointNumber: Int? {
-        guard let selectedEpisodeID else { return nil }
-        let locatableEpisodes = episodes
-            .filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
-            .sorted { $0.startDate < $1.startDate }
-        guard let index = locatableEpisodes.firstIndex(where: { $0.id == selectedEpisodeID }) else {
-            return nil
-        }
-        return index + 1
-    }
-
     private var locatablePointCount: Int {
         episodes.count {
             $0.kind == .stay && $0.latitude != nil && $0.longitude != nil
@@ -137,14 +123,16 @@ struct ExpandedDayMapView: View {
                 routeLocations: routeLocations,
                 currentLocation: currentLocation,
                 selectedEpisodeID: $selectedEpisodeID,
-                interactionModes: [.pan, .zoom]
+                interactionModes: [.pan, .zoom],
+                routeOptions: .detail
             )
             .ignoresSafeArea(edges: .bottom)
             .safeAreaInset(edge: .bottom) {
-                ExpandedMapStatusCard(
+                ExpandedMapTimelinePanel(
                     pointCount: locatablePointCount,
-                    selectedEpisode: selectedEpisode,
-                    selectedPointNumber: selectedPointNumber
+                    episodes: locatableEpisodes,
+                    selectedEpisodeID: selectedEpisodeID,
+                    select: select
                 )
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 8)
@@ -158,42 +146,102 @@ struct ExpandedDayMapView: View {
             }
         }
     }
+
+    private var locatableEpisodes: [TimelineEpisode] {
+        episodes
+            .filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
+            .sorted { $0.startDate < $1.startDate }
+    }
+
+    private func select(_ episode: TimelineEpisode) {
+        selectedEpisodeID = episode.id
+    }
 }
 
-private struct ExpandedMapStatusCard: View {
+private struct ExpandedMapTimelinePanel: View {
     let pointCount: Int
-    let selectedEpisode: TimelineEpisode?
-    let selectedPointNumber: Int?
+    let episodes: [TimelineEpisode]
+    let selectedEpisodeID: UUID?
+    let select: (TimelineEpisode) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let selectedEpisode {
-                if let selectedPointNumber {
-                    Label("地図の\(selectedPointNumber)番", systemImage: "mappin.circle.fill")
-                        .font(.caption.bold())
-                        .foregroundStyle(.tint)
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            Label(
+                pointCount >= 2 ? "番号順に、地点間を直線で表示" : "記録された地点を表示",
+                systemImage: "map"
+            )
+            .font(.subheadline.weight(.semibold))
 
-                Text(selectedEpisode.title)
-                    .font(.headline)
-
-                Text(TimelineFormatting.clock(
-                    selectedEpisode.startDate,
-                    timeZoneIdentifier: selectedEpisode.timeZoneIdentifier
-                ))
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(.secondary)
+            if episodes.isEmpty {
+                Text("タイムラインに地点が入ると、ここから地図を移動できます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else {
-                Label(
-                    pointCount >= 2 ? "番号順に、地点間を直線で表示" : "記録された地点を表示",
-                    systemImage: "map"
-                )
-                .font(.subheadline)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(Array(episodes.enumerated()), id: \.element.id) { index, episode in
+                            ExpandedMapTimelineChip(
+                                index: index + 1,
+                                episode: episode,
+                                isSelected: selectedEpisodeID == episode.id
+                            ) {
+                                select(episode)
+                            }
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .scrollTargetBehavior(.viewAligned)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.cardPadding)
         .daytraceGlassSurface()
+    }
+}
+
+private struct ExpandedMapTimelineChip: View {
+    let index: Int
+    let episode: TimelineEpisode
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Text(index, format: .number)
+                    .font(.caption.bold())
+                    .foregroundStyle(isSelected ? Color(.systemBackground) : Color.accentColor)
+                    .frame(width: 26, height: 26)
+                    .background(isSelected ? Color.accentColor : Color.accentColor.opacity(0.12), in: .circle)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(episode.title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+
+                    Text(TimelineFormatting.clock(
+                        episode.startDate,
+                        timeZoneIdentifier: episode.timeZoneIdentifier
+                    ))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 154, alignment: .leading)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                isSelected ? Color.accentColor.opacity(0.14) : Color(.secondarySystemBackground).opacity(0.74),
+                in: .capsule
+            )
+            .overlay {
+                Capsule()
+                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.48) : Color.primary.opacity(0.08), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(index)番目、\(episode.title)へ移動")
         .accessibilityElement(children: .combine)
     }
 }
@@ -206,6 +254,7 @@ private struct DayMapCanvas: View {
     let currentLocation: CurrentLocationContext?
     @Binding var selectedEpisodeID: UUID?
     let interactionModes: MapInteractionModes
+    let routeOptions: DayRouteProjection.Options
 
     @State private var position: MapCameraPosition = .automatic
 
@@ -215,39 +264,35 @@ private struct DayMapCanvas: View {
             .sorted { $0.startDate < $1.startDate }
     }
 
-    private var routeCoordinates: [CLLocationCoordinate2D] {
-        routePoints.map(\.coordinate)
-    }
-
-    private var routePoints: [DayRoutePoint] {
-        DayRouteProjection.points(
+    private var routeSnapshot: DayRouteSnapshot {
+        let routePoints = DayRouteProjection.points(
             episodes: episodes,
             locationEvidence: routeLocations,
-            currentLocation: currentLocation
+            currentLocation: currentLocation,
+            options: routeOptions
         )
-    }
-
-    private var movementSamplePoints: [DayRoutePoint] {
-        routePoints.filter { $0.kind == .movementSample }
+        return DayRouteSnapshot(points: routePoints)
     }
 
     var body: some View {
+        let route = routeSnapshot
+
         Map(position: $position, interactionModes: interactionModes) {
-            if routeCoordinates.count >= 2 {
-                MapPolyline(coordinates: routeCoordinates, contourStyle: .straight)
+            if route.coordinates.count >= 2 {
+                MapPolyline(coordinates: route.coordinates, contourStyle: .straight)
                     .stroke(
                         Color(.systemBackground).opacity(0.82),
                         style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
                     )
 
-                MapPolyline(coordinates: routeCoordinates, contourStyle: .straight)
+                MapPolyline(coordinates: route.coordinates, contourStyle: .straight)
                     .stroke(
                         Color.accentColor.opacity(0.72),
                         style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
                     )
             }
 
-            ForEach(movementSamplePoints) { point in
+            ForEach(route.movementSamplePoints) { point in
                 Annotation("移動中の記録", coordinate: point.coordinate) {
                     Circle()
                         .fill(Color.accentColor.opacity(0.58))
@@ -260,8 +305,7 @@ private struct DayMapCanvas: View {
                 }
             }
 
-            ForEach(locatableEpisodes.indices, id: \.self) { index in
-                let episode = locatableEpisodes[index]
+            ForEach(Array(locatableEpisodes.enumerated()), id: \.element.id) { index, episode in
                 if let latitude = episode.latitude, let longitude = episode.longitude {
                     Annotation(
                         episode.title,
@@ -298,6 +342,9 @@ private struct DayMapCanvas: View {
             }
         }
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+        .transaction { transaction in
+            transaction.animation = nil
+        }
         .onChange(of: selectedEpisodeID) { _, selectedID in
             focusMap(on: selectedID)
         }
@@ -328,6 +375,16 @@ private struct DayMapCanvas: View {
         withAnimation(reduceMotion ? nil : .snappy) {
             position = .region(region)
         }
+    }
+}
+
+private struct DayRouteSnapshot {
+    let coordinates: [CLLocationCoordinate2D]
+    let movementSamplePoints: [DayRoutePoint]
+
+    init(points: [DayRoutePoint]) {
+        coordinates = points.map(\.coordinate)
+        movementSamplePoints = points.filter { $0.kind == .movementSample }
     }
 }
 

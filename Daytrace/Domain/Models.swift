@@ -367,13 +367,20 @@ struct TimelineEditingService {
         latitude: Double? = nil,
         longitude: Double? = nil,
         confirmLocation: Bool,
+        mergePlaceID: UUID? = nil,
         in context: ModelContext
     ) throws {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let safeTitle = trimmedTitle.isEmpty ? episode.title : trimmedTitle
+        let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
+        let mergePlace = mergePlaceID.flatMap { mergePlaceID in
+            places.first { $0.id == mergePlaceID }
+        }
+        let safeTitle = mergePlace?.name ?? (trimmedTitle.isEmpty ? episode.title : trimmedTitle)
         let startChanged = startDate != episode.startDate
         let endChanged = endDate != episode.endDate
-        let replacementCoordinate = coordinate(latitude: latitude, longitude: longitude)
+        let replacementCoordinate = mergePlace.map {
+            CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+        } ?? coordinate(latitude: latitude, longitude: longitude)
         let positionChanged = replacementCoordinate.map {
             guard let currentLatitude = episode.latitude,
                   let currentLongitude = episode.longitude else {
@@ -407,7 +414,9 @@ struct TimelineEditingService {
                 replacementTitle: safeTitle
             ))
             episode.title = safeTitle
-            detachMismatchedPlace(from: episode, title: safeTitle, in: context)
+            if mergePlace == nil {
+                detachMismatchedPlace(from: episode, title: safeTitle, in: context)
+            }
         }
 
         if let replacementCoordinate, positionChanged {
@@ -420,7 +429,9 @@ struct TimelineEditingService {
             ))
             episode.latitude = replacementCoordinate.latitude
             episode.longitude = replacementCoordinate.longitude
-            detachPlaceOutsideCorrectedLocation(from: episode, in: context)
+            if mergePlace == nil {
+                detachPlaceOutsideCorrectedLocation(from: episode, in: context)
+            }
         }
 
         if startChanged || endChanged {
@@ -452,7 +463,15 @@ struct TimelineEditingService {
             episode.endDate = endDate
         }
 
-        let canConfirmLocation = confirmLocation
+        if let mergePlace {
+            episode.title = mergePlace.name
+            episode.placeID = mergePlace.id
+            episode.latitude = mergePlace.latitude
+            episode.longitude = mergePlace.longitude
+            mergePlace.source = .userConfirmed
+        }
+
+        let canConfirmLocation = (confirmLocation || mergePlace != nil)
             && !safeTitle.isEmpty
             && safeTitle != "未設定の場所"
 

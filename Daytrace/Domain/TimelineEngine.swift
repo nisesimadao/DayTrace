@@ -30,12 +30,20 @@ struct TimelineEngine {
         )
 
         let allVisits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        let inferredArrivalsByVisitID = inferredDepartureOnlyArrivals(
+            for: allVisits,
+            locations: locations,
+            horizon: horizon
+        )
         let visits = allVisits
             .filter { visit in
-                guard let arrival = visit.arrivalDate else { return false }
+                guard let arrival = visit.arrivalDate ?? inferredArrivalsByVisitID[visit.id] else { return false }
                 return arrival >= horizon || (visit.departureDate ?? .distantFuture) >= horizon
             }
-            .sorted { visitStart($0) < visitStart($1) }
+            .sorted {
+                visitStart($0, inferredArrivalsByVisitID: inferredArrivalsByVisitID)
+                    < visitStart($1, inferredArrivalsByVisitID: inferredArrivalsByVisitID)
+            }
 
         let existingEpisodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
         let assertions = try context.fetch(FetchDescriptor<UserAssertion>()).filter { $0.isActive }
@@ -74,13 +82,23 @@ struct TimelineEngine {
         }
 
         for visit in visits {
-            guard let arrival = visit.arrivalDate else { continue }
-            let resolvedPlace = nearestPlace(to: visit, in: context)
-            let inferredTitle = resolvedPlace?.name ?? title(for: visit)
-            let inferredSubtitle = subtitle(for: visit, resolvedPlace: resolvedPlace)
-            let confidence = inferredConfidence(for: visit, resolvedPlace: resolvedPlace)
+            guard let arrival = visit.arrivalDate ?? inferredArrivalsByVisitID[visit.id] else { continue }
 
             if let episode = stayByVisitID[visit.id] {
+                let visitPlace = nearestPlace(to: visit, in: context)
+                let startLocation = representativeStartLocation(
+                    for: episode,
+                    visit: visit,
+                    locations: locations
+                )
+                let startPlace = startLocation.flatMap { nearestPlace(to: $0, in: context) }
+                let resolvedPlace = visitPlace
+                    ?? startPlace
+                    ?? preservedExistingPlace(for: episode, visit: visit, in: context)
+                let inferredTitle = resolvedPlace?.name ?? title(for: visit)
+                let inferredSubtitle = subtitle(for: visit, resolvedPlace: resolvedPlace)
+                let confidence = inferredConfidence(for: visit, resolvedPlace: resolvedPlace)
+
                 reconcile(
                     episode,
                     with: visit,
@@ -89,9 +107,21 @@ struct TimelineEngine {
                     inferredSubtitle: inferredSubtitle,
                     inferredConfidence: confidence,
                     resolvedPlace: resolvedPlace,
+                    coordinateOverride: coordinateOverride(
+                        for: episode,
+                        visit: visit,
+                        resolvedPlace: resolvedPlace,
+                        startLocation: startLocation,
+                        didResolveFromStartLocation: visitPlace == nil && startPlace != nil
+                    ),
                     assertions: assertionsByEpisode[episode.id] ?? []
                 )
             } else {
+                let resolvedPlace = nearestPlace(to: visit, in: context)
+                let inferredTitle = resolvedPlace?.name ?? title(for: visit)
+                let inferredSubtitle = subtitle(for: visit, resolvedPlace: resolvedPlace)
+                let confidence = inferredConfidence(for: visit, resolvedPlace: resolvedPlace)
+
                 let episode = TimelineEpisode(
                     kind: .stay,
                     startDate: arrival,
@@ -195,6 +225,7 @@ struct TimelineEngine {
         inferredSubtitle: String?,
         inferredConfidence: EpisodeConfidence,
         resolvedPlace: PlaceRecord?,
+        coordinateOverride: CLLocationCoordinate2D?,
         assertions: [UserAssertion]
     ) {
         let assertionTypes = Set(assertions.map(\.type))
@@ -208,7 +239,7 @@ struct TimelineEngine {
         episode.timeZoneIdentifier = visit.timeZoneIdentifier
 
         if !overridesStart {
-            episode.startDate = arrival
+            episode.startDate = min(episode.startDate, arrival)
         }
         if !overridesEnd {
             episode.endDate = visit.departureDate
@@ -221,8 +252,13 @@ struct TimelineEngine {
         }
 
         if !assertionTypes.contains(.reposition) {
-            episode.latitude = visit.latitude
-            episode.longitude = visit.longitude
+            if let coordinateOverride {
+                episode.latitude = coordinateOverride.latitude
+                episode.longitude = coordinateOverride.longitude
+            } else {
+                episode.latitude = visit.latitude
+                episode.longitude = visit.longitude
+            }
         }
 
         if assertionTypes.contains(.confirm) {
@@ -484,20 +520,137 @@ struct TimelineEngine {
               visit.horizontalAccuracy <= Self.maximumPlaceResolutionAccuracy else {
             return nil
         }
+        return nearestPlace(
+            latitude: visit.latitude,
+            longitude: visit.longitude,
+            horizontalAccuracy: visit.horizontalAccuracy,
+            in: context
+        )
+    }
+
+    private func nearestPlace(to location: LocationEvidence, in context: ModelContext) -> PlaceRecord? {
+        guard location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= Self.maximumPlaceResolutionAccuracy else {
+            return nil
+        }
+        return nearestPlace(
+            latitude: location.latitude,
+            longitude: location.longitude,
+            horizontalAccuracy: location.horizontalAccuracy,
+            in: context
+        )
+    }
+
+    private func nearestPlace(
+        latitude: Double,
+        longitude: Double,
+        horizontalAccuracy: CLLocationAccuracy,
+        in context: ModelContext
+    ) -> PlaceRecord? {
         guard let places = try? context.fetch(FetchDescriptor<PlaceRecord>()), !places.isEmpty else { return nil }
-        let visitLocation = CLLocation(latitude: visit.latitude, longitude: visit.longitude)
+        let location = CLLocation(latitude: latitude, longitude: longitude)
 
         return places
             .compactMap { place -> (PlaceRecord, CLLocationDistance)? in
-                let distance = visitLocation.distance(
+                let distance = location.distance(
                     from: CLLocation(latitude: place.latitude, longitude: place.longitude)
                 )
-                let allowedDistance = max(place.radius, visit.horizontalAccuracy)
+                let allowedDistance = max(place.radius, horizontalAccuracy)
                 guard distance <= allowedDistance else { return nil }
                 return (place, distance)
             }
             .min { $0.1 < $1.1 }?
             .0
+    }
+
+    private func preservedExistingPlace(
+        for episode: TimelineEpisode,
+        visit: VisitEvidence,
+        in context: ModelContext
+    ) -> PlaceRecord? {
+        guard let placeID = episode.placeID,
+              let places = try? context.fetch(FetchDescriptor<PlaceRecord>()),
+              let place = places.first(where: { $0.id == placeID }) else {
+            return nil
+        }
+
+        let distance = CLLocation(latitude: visit.latitude, longitude: visit.longitude).distance(
+            from: CLLocation(latitude: place.latitude, longitude: place.longitude)
+        )
+        let accuracyAllowance: CLLocationDistance
+        if visit.horizontalAccuracy >= 0 {
+            accuracyAllowance = min(max(visit.horizontalAccuracy, Self.maximumPlaceResolutionAccuracy), 1_000)
+        } else {
+            accuracyAllowance = Self.maximumPlaceResolutionAccuracy
+        }
+
+        guard distance <= max(place.radius, accuracyAllowance) else {
+            return nil
+        }
+        return place
+    }
+
+    private func coordinateOverride(
+        for episode: TimelineEpisode,
+        visit: VisitEvidence,
+        resolvedPlace: PlaceRecord?,
+        startLocation: LocationEvidence?,
+        didResolveFromStartLocation: Bool
+    ) -> CLLocationCoordinate2D? {
+        if didResolveFromStartLocation, let resolvedPlace {
+            return CLLocationCoordinate2D(
+                latitude: resolvedPlace.latitude,
+                longitude: resolvedPlace.longitude
+            )
+        }
+
+        if let startLocation,
+           visit.horizontalAccuracy < 0 || visit.horizontalAccuracy > Self.maximumPlaceResolutionAccuracy {
+            return CLLocationCoordinate2D(
+                latitude: startLocation.latitude,
+                longitude: startLocation.longitude
+            )
+        }
+
+        guard episode.placeID != nil,
+              resolvedPlace?.id == episode.placeID,
+              visit.horizontalAccuracy < 0 || visit.horizontalAccuracy > Self.maximumPlaceResolutionAccuracy else {
+            return nil
+        }
+
+        return CLLocationCoordinate2D(
+            latitude: resolvedPlace?.latitude ?? episode.latitude ?? visit.latitude,
+            longitude: resolvedPlace?.longitude ?? episode.longitude ?? visit.longitude
+        )
+    }
+
+    private func representativeStartLocation(
+        for episode: TimelineEpisode,
+        visit: VisitEvidence,
+        locations: [LocationEvidence]
+    ) -> LocationEvidence? {
+        guard visit.horizontalAccuracy < 0 || visit.horizontalAccuracy > Self.maximumPlaceResolutionAccuracy else {
+            return nil
+        }
+
+        let start = min(episode.startDate, visit.arrivalDate ?? episode.startDate)
+        let end = min(
+            start.addingTimeInterval(45 * 60),
+            visit.departureDate ?? start.addingTimeInterval(45 * 60)
+        )
+        let candidates = locations.filter {
+            $0.timestamp >= start
+                && $0.timestamp <= end
+                && $0.horizontalAccuracy >= 0
+                && $0.horizontalAccuracy <= Self.maximumPlaceResolutionAccuracy
+        }
+
+        return candidates.min {
+            if $0.horizontalAccuracy == $1.horizontalAccuracy {
+                return $0.timestamp < $1.timestamp
+            }
+            return $0.horizontalAccuracy < $1.horizontalAccuracy
+        }
     }
 
     private func inferredConfidence(
@@ -518,6 +671,53 @@ struct TimelineEngine {
 
     private func visitStart(_ visit: VisitEvidence) -> Date {
         visit.arrivalDate ?? visit.departureDate ?? visit.observedAt
+    }
+
+    private func visitStart(
+        _ visit: VisitEvidence,
+        inferredArrivalsByVisitID: [UUID: Date]
+    ) -> Date {
+        visit.arrivalDate ?? inferredArrivalsByVisitID[visit.id] ?? visit.departureDate ?? visit.observedAt
+    }
+
+    private func inferredDepartureOnlyArrivals(
+        for visits: [VisitEvidence],
+        locations: [LocationEvidence],
+        horizon: Date
+    ) -> [UUID: Date] {
+        var arrivals: [UUID: Date] = [:]
+
+        for visit in visits {
+            guard visit.arrivalDate == nil,
+                  let departure = visit.departureDate else {
+                continue
+            }
+
+            let lookbackStart = max(horizon, departure.addingTimeInterval(-12 * 60 * 60))
+            let visitLocation = CLLocation(latitude: visit.latitude, longitude: visit.longitude)
+            let candidates = locations.filter { location in
+                guard location.timestamp >= lookbackStart,
+                      location.timestamp <= departure,
+                      location.horizontalAccuracy >= 0,
+                      location.horizontalAccuracy <= Self.maximumPlaceResolutionAccuracy,
+                      location.source == .standardLocation || location.source == .significantChange else {
+                    return false
+                }
+
+                let locationPoint = CLLocation(latitude: location.latitude, longitude: location.longitude)
+                let allowance = max(
+                    Self.maximumPlaceResolutionAccuracy,
+                    max(visit.horizontalAccuracy, location.horizontalAccuracy)
+                )
+                return visitLocation.distance(from: locationPoint) <= allowance
+            }
+
+            if let first = candidates.min(by: { $0.timestamp < $1.timestamp }) {
+                arrivals[visit.id] = first.timestamp
+            }
+        }
+
+        return arrivals
     }
 
     private func title(for visit: VisitEvidence) -> String {
