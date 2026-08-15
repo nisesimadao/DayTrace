@@ -18,40 +18,32 @@ struct AppShellView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            TabView(selection: $selectedTab) {
-                Tab("今日", systemImage: "sun.max", value: AppTab.today) {
-                    NavigationStack {
-                        TodayView()
-                    }
+        TabView(selection: $selectedTab) {
+            Tab("今日", systemImage: "sun.max", value: AppTab.today) {
+                NavigationStack {
+                    TodayView()
                 }
+            }
 
-                Tab("履歴", systemImage: "calendar", value: AppTab.history) {
-                    NavigationStack {
-                        HistoryRootView()
-                    }
+            Tab("履歴", systemImage: "calendar", value: AppTab.history) {
+                NavigationStack {
+                    HistoryRootView()
                 }
             }
-            .daytraceModernTabBar()
-            .overlay(alignment: .top) {
-                DaytraceDeviceTopBrand(
-                    topInset: geometry.safeAreaInsets.top,
-                    availableWidth: geometry.size.width
-                )
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .daytraceOpenToday)) { _ in
+        }
+        .daytraceModernTabBar()
+        .onReceive(NotificationCenter.default.publisher(for: .daytraceOpenToday)) { _ in
+            selectedTab = .today
+        }
+        .onOpenURL { url in
+            guard url.scheme == "daytrace" else { return }
+            switch url.host {
+            case "today":
                 selectedTab = .today
-            }
-            .onOpenURL { url in
-                guard url.scheme == "daytrace" else { return }
-                switch url.host {
-                case "today":
-                    selectedTab = .today
-                case "history":
-                    selectedTab = .history
-                default:
-                    break
-                }
+            case "history":
+                selectedTab = .history
+            default:
+                break
             }
         }
     }

@@ -75,6 +75,7 @@ enum DayRouteProjection {
                     from: usableSamples,
                     start: departure,
                     end: pair.1.startDate,
+                    startCoordinate: coordinate(for: pair.0),
                     options: options
                 ))
             }
@@ -88,6 +89,7 @@ enum DayRouteProjection {
                 from: usableSamples,
                 start: routeStart,
                 end: currentLocation.lastEvidenceAt,
+                startCoordinate: coordinate(for: lastStay),
                 options: options
             ))
             points.append(point(for: currentLocation))
@@ -115,6 +117,7 @@ enum DayRouteProjection {
         from evidence: [LocationEvidence],
         start: Date,
         end: Date,
+        startCoordinate: CLLocationCoordinate2D,
         options: Options
     ) -> [DayRoutePoint] {
         guard end > start else { return [] }
@@ -122,6 +125,7 @@ enum DayRouteProjection {
         let samples = evidence.filter { $0.timestamp > start && $0.timestamp < end }
         let thinnedSamples = thin(
             samples,
+            startCoordinate: startCoordinate,
             minimumInterval: options.minimumSampleInterval,
             minimumDistance: options.minimumSampleDistance
         )
@@ -139,33 +143,34 @@ enum DayRouteProjection {
 
     private static func thin(
         _ samples: [LocationEvidence],
+        startCoordinate: CLLocationCoordinate2D,
         minimumInterval: TimeInterval,
         minimumDistance: CLLocationDistance
     ) -> [LocationEvidence] {
-        guard let first = samples.first else { return [] }
+        var thinned: [LocationEvidence] = []
+        var lastAcceptedLocation = CLLocation(
+            latitude: startCoordinate.latitude,
+            longitude: startCoordinate.longitude
+        )
+        var lastAcceptedTimestamp: Date?
 
-        var thinned = [first]
-        var lastAccepted = first
-
-        for sample in samples.dropFirst() {
-            let elapsed = sample.timestamp.timeIntervalSince(lastAccepted.timestamp)
-            let distance = CLLocation(latitude: sample.latitude, longitude: sample.longitude).distance(
-                from: CLLocation(latitude: lastAccepted.latitude, longitude: lastAccepted.longitude)
-            )
+        for sample in samples {
+            let elapsed = lastAcceptedTimestamp.map {
+                sample.timestamp.timeIntervalSince($0)
+            } ?? .greatestFiniteMagnitude
+            let sampleLocation = CLLocation(latitude: sample.latitude, longitude: sample.longitude)
+            let distance = sampleLocation.distance(from: lastAcceptedLocation)
             guard elapsed >= minimumInterval && distance >= minimumDistance else {
                 continue
             }
             thinned.append(sample)
-            lastAccepted = sample
+            lastAcceptedLocation = sampleLocation
+            lastAcceptedTimestamp = sample.timestamp
         }
 
         if let last = samples.last, thinned.last?.id != last.id {
-            let distance = CLLocation(latitude: last.latitude, longitude: last.longitude).distance(
-                from: CLLocation(
-                    latitude: thinned.last?.latitude ?? first.latitude,
-                    longitude: thinned.last?.longitude ?? first.longitude
-                )
-            )
+            let distance = CLLocation(latitude: last.latitude, longitude: last.longitude)
+                .distance(from: lastAcceptedLocation)
             if distance >= minimumDistance {
                 thinned.append(last)
             }
@@ -190,6 +195,13 @@ enum DayRouteProjection {
             id: "stay-\(episode.id.uuidString)",
             kind: .stay,
             timestamp: episode.startDate,
+            latitude: episode.latitude ?? 0,
+            longitude: episode.longitude ?? 0
+        )
+    }
+
+    private static func coordinate(for episode: TimelineEpisode) -> CLLocationCoordinate2D {
+        CLLocationCoordinate2D(
             latitude: episode.latitude ?? 0,
             longitude: episode.longitude ?? 0
         )

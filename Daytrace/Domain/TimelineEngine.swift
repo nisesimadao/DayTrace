@@ -239,7 +239,11 @@ struct TimelineEngine {
         episode.timeZoneIdentifier = visit.timeZoneIdentifier
 
         if !overridesStart {
-            episode.startDate = min(episode.startDate, arrival)
+            // Core Location can revise a visit's arrival forward after first
+            // delivery, so keep the earliest known value by default. Once the
+            // user edits only the departure, however, the untouched arrival
+            // remains automatic and should track the latest visit evidence.
+            episode.startDate = overridesEnd ? arrival : min(episode.startDate, arrival)
         }
         if !overridesEnd {
             episode.endDate = visit.departureDate
