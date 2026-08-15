@@ -865,8 +865,8 @@ final class DayProjectionTests: XCTestCase {
     func testTransitionUsesStayBoundariesWhenFirstLocationSampleIsLate() throws {
         let context = try makeContext()
         let firstDeparture = baseTime.addingTimeInterval(60 * 60)
-        let firstMovingSample = firstDeparture.addingTimeInterval(2 * 60 * 60 + 38 * 60)
-        let secondArrival = firstMovingSample.addingTimeInterval(2 * 60 * 60 + 38 * 60)
+        let firstMovingSample = firstDeparture.addingTimeInterval(2 * 60 * 60)
+        let secondArrival = firstDeparture.addingTimeInterval(2 * 60 * 60 + 38 * 60)
         insertTransitionVisits(firstDeparture: firstDeparture, secondArrival: secondArrival, in: context)
         context.insert(locationEvidence(
             at: firstMovingSample,
@@ -886,6 +886,10 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertEqual(transitions.map(\.kind), [.move])
         XCTAssertEqual(transitions[0].startDate, firstDeparture)
         XCTAssertEqual(transitions[0].endDate, secondArrival)
+        XCTAssertEqual(
+            TimelineFormatting.duration(from: transitions[0].startDate, to: transitions[0].endDate),
+            "約2時間38分"
+        )
     }
 
     @MainActor

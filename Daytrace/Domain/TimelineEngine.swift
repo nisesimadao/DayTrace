@@ -305,17 +305,15 @@ struct TimelineEngine {
         locations: [LocationEvidence],
         context: ModelContext
     ) {
-        let transitionSamples = locations
-            .filter {
+        let hasTransitionSample = locations.contains {
                 $0.timestamp >= departure
                     && $0.timestamp <= nextArrival
                     && $0.horizontalAccuracy >= 0
                     && $0.horizontalAccuracy <= 1_000
                     && ($0.source == .standardLocation || $0.source == .significantChange)
-            }
-            .sorted { $0.timestamp < $1.timestamp }
+        }
 
-        guard !transitionSamples.isEmpty else {
+        guard hasTransitionSample else {
             insertTransitionEpisode(
                 kind: .gap,
                 startDate: departure,

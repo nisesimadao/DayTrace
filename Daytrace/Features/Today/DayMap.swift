@@ -374,9 +374,9 @@ private struct ExpandedMapTimelineRow: View {
 
                 Spacer(minLength: 8)
 
-                Image(systemName: "chevron.right")
+                Image(systemName: isSelected ? "checkmark" : "chevron.right")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(isSelected ? Color.daytraceInk : Color.secondary)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 10)
@@ -388,6 +388,7 @@ private struct ExpandedMapTimelineRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(index)番目、\(episode.title)へ移動")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityElement(children: .combine)
     }
 }

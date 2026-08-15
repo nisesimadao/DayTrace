@@ -125,7 +125,6 @@ struct TodayView: View {
             }
             .sorted { $0.timestamp < $1.timestamp }
 
-        guard currentLocation.lastEvidenceAt.timeIntervalSince(routeStart) >= 60 else { return nil }
         return CurrentLocationTransitionContext(
             kind: movementSamples.isEmpty ? .gap : .move,
             startDate: routeStart,
