@@ -52,6 +52,7 @@ final class VisitEvidence {
     var longitude: Double
     var horizontalAccuracy: Double
     var timeZoneIdentifier: String
+    var sourceRaw: String = EvidenceSource.visit.rawValue
 
     init(
         id: UUID = UUID(),
@@ -61,7 +62,8 @@ final class VisitEvidence {
         latitude: Double,
         longitude: Double,
         horizontalAccuracy: Double,
-        timeZoneIdentifier: String
+        timeZoneIdentifier: String,
+        source: EvidenceSource = .visit
     ) {
         self.id = id
         self.arrivalDate = arrivalDate
@@ -71,6 +73,12 @@ final class VisitEvidence {
         self.longitude = longitude
         self.horizontalAccuracy = horizontalAccuracy
         self.timeZoneIdentifier = timeZoneIdentifier
+        self.sourceRaw = source.rawValue
+    }
+
+    var source: EvidenceSource {
+        get { EvidenceSource(rawValue: sourceRaw) ?? .visit }
+        set { sourceRaw = newValue.rawValue }
     }
 }
 
@@ -253,6 +261,7 @@ enum EvidenceSource: String, Codable, Hashable, Sendable {
     case standardLocation
     case significantChange
     case visit
+    case inferredStop
     case userAdded
     case imported
 }
@@ -278,6 +287,7 @@ enum EpisodeConfidence: String, Codable, Hashable, Sendable {
 
 enum UserAssertionType: String, Codable, Hashable, Sendable {
     case rename
+    case automaticPlaceSuggestion
     case retime
     case retimeStart
     case retimeEnd
@@ -355,13 +365,31 @@ struct TimelineEditingService {
         title: String,
         startDate: Date,
         endDate: Date?,
+        latitude: Double? = nil,
+        longitude: Double? = nil,
         confirmLocation: Bool,
+        mergePlaceID: UUID? = nil,
         in context: ModelContext
     ) throws {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let safeTitle = trimmedTitle.isEmpty ? episode.title : trimmedTitle
+        let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
+        let mergePlace = mergePlaceID.flatMap { mergePlaceID in
+            places.first { $0.id == mergePlaceID }
+        }
+        let safeTitle = mergePlace?.name ?? (trimmedTitle.isEmpty ? episode.title : trimmedTitle)
         let startChanged = startDate != episode.startDate
         let endChanged = endDate != episode.endDate
+        let replacementCoordinate = mergePlace.map {
+            CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+        } ?? coordinate(latitude: latitude, longitude: longitude)
+        let positionChanged = replacementCoordinate.map {
+            guard let currentLatitude = episode.latitude,
+                  let currentLongitude = episode.longitude else {
+                return true
+            }
+            return abs($0.latitude - currentLatitude) >= 0.000_001
+                || abs($0.longitude - currentLongitude) >= 0.000_001
+        } ?? false
 
         if startChanged || endChanged {
             let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
@@ -380,6 +408,7 @@ struct TimelineEditingService {
         }
 
         if safeTitle != episode.title {
+            deactivateAssertions(for: episode.id, type: .automaticPlaceSuggestion, in: context)
             deactivateAssertions(for: episode.id, type: .rename, in: context)
             context.insert(UserAssertion(
                 episodeID: episode.id,
@@ -387,7 +416,24 @@ struct TimelineEditingService {
                 replacementTitle: safeTitle
             ))
             episode.title = safeTitle
-            detachMismatchedPlace(from: episode, title: safeTitle, in: context)
+            if mergePlace == nil {
+                detachMismatchedPlace(from: episode, title: safeTitle, in: context)
+            }
+        }
+
+        if let replacementCoordinate, positionChanged {
+            deactivateAssertions(for: episode.id, type: .reposition, in: context)
+            context.insert(UserAssertion(
+                episodeID: episode.id,
+                type: .reposition,
+                replacementLatitude: replacementCoordinate.latitude,
+                replacementLongitude: replacementCoordinate.longitude
+            ))
+            episode.latitude = replacementCoordinate.latitude
+            episode.longitude = replacementCoordinate.longitude
+            if mergePlace == nil {
+                detachPlaceOutsideCorrectedLocation(from: episode, in: context)
+            }
         }
 
         if startChanged || endChanged {
@@ -419,11 +465,19 @@ struct TimelineEditingService {
             episode.endDate = endDate
         }
 
-        let canConfirmLocation = confirmLocation
+        if let mergePlace {
+            episode.title = mergePlace.name
+            episode.placeID = mergePlace.id
+            episode.latitude = mergePlace.latitude
+            episode.longitude = mergePlace.longitude
+            mergePlace.source = .userConfirmed
+        }
+
+        let canConfirmLocation = (confirmLocation || mergePlace != nil)
             && !safeTitle.isEmpty
             && safeTitle != "未設定の場所"
 
-        if canConfirmLocation, episode.confidence != .high {
+        if canConfirmLocation {
             deactivateAssertions(for: episode.id, type: .confirm, in: context)
             context.insert(UserAssertion(episodeID: episode.id, type: .confirm))
             episode.confidence = .high
@@ -432,6 +486,13 @@ struct TimelineEditingService {
         }
 
         try context.save()
+    }
+
+    private func coordinate(latitude: Double?, longitude: Double?) -> CLLocationCoordinate2D? {
+        guard let latitude, let longitude else { return nil }
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
+        return coordinate
     }
 
     func setSuppressed(
@@ -530,6 +591,28 @@ struct TimelineEditingService {
         guard let placeID = episode.placeID else { return }
         let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
         guard let place = places.first(where: { $0.id == placeID }), place.name != title else { return }
+        episode.placeID = nil
+        episode.confidence = .medium
+        episode.subtitle = "場所を確認"
+    }
+
+    private func detachPlaceOutsideCorrectedLocation(
+        from episode: TimelineEpisode,
+        in context: ModelContext
+    ) {
+        guard let placeID = episode.placeID,
+              let latitude = episode.latitude,
+              let longitude = episode.longitude else {
+            return
+        }
+        let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
+        guard let place = places.first(where: { $0.id == placeID }) else { return }
+
+        let distance = CLLocation(latitude: latitude, longitude: longitude).distance(
+            from: CLLocation(latitude: place.latitude, longitude: place.longitude)
+        )
+        guard distance > max(place.radius, 100) else { return }
+
         episode.placeID = nil
         episode.confidence = .medium
         episode.subtitle = "場所を確認"

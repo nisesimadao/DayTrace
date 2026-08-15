@@ -2,47 +2,32 @@ import MapKit
 import SwiftData
 import SwiftUI
 
-enum HistoryMode: String, CaseIterable, Identifiable {
-    case days
+enum HistoryDestination: Hashable {
     case places
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .days: "日付"
-        case .places: "マップ"
-        }
-    }
 }
 
 struct HistoryRootView: View {
-    @State private var mode: HistoryMode = .days
-
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("履歴の表示", selection: $mode) {
-                ForEach(HistoryMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
+        HistoryView()
+            .navigationTitle("履歴")
+            .navigationBarTitleDisplayMode(.large)
+            .navigationDestination(for: HistoryDestination.self) { destination in
+                switch destination {
+                case .places:
+                    HistoryPlacesMap()
+                        .navigationTitle("場所の記憶")
+                        .navigationBarTitleDisplayMode(.inline)
                 }
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, DS.horizontalPadding)
-            .padding(.top, 8)
-            .padding(.bottom, 8)
-
-            switch mode {
-            case .days:
-                HistoryView()
-            case .places:
-                HistoryPlacesMap()
+            .navigationDestination(for: CalendarDay.self) { day in
+                HistoricalDayDetailView(day: day)
             }
-        }
-        .navigationTitle("履歴")
     }
 }
 
 struct HistoryPlacesMap: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     @Query(sort: \PlaceRecord.name) private var places: [PlaceRecord]
     @Query(sort: \TimelineEpisode.startDate, order: .reverse) private var episodes: [TimelineEpisode]
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
@@ -128,6 +113,8 @@ struct HistoryPlacesMap: View {
                                     select(summary)
                                 } label: {
                                     HistoryPlaceMarker(isSelected: selectedPlaceID == summary.id)
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(Circle())
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("\(summary.displayName)を選択")
@@ -145,6 +132,7 @@ struct HistoryPlacesMap: View {
 
                     if let selectedSummary {
                         SelectedHistoryPlaceCard(summary: selectedSummary)
+                            .transition(.move(edge: .top).combined(with: .opacity))
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
@@ -168,11 +156,12 @@ struct HistoryPlacesMap: View {
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 40)
             }
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
         }
     }
 
     private func select(_ summary: HistoryPlaceSummary) {
-        withAnimation(.snappy) {
+        withAnimation(reduceMotion ? nil : .snappy) {
             selectedPlaceID = summary.id
             position = .region(MKCoordinateRegion(
                 center: summary.coordinate,
@@ -215,7 +204,7 @@ private struct HistoryPlaceMarker: View {
                 .shadow(radius: 3, y: 1)
 
             Circle()
-                .fill(Color.accentColor)
+                .fill(Color.daytraceInk)
                 .frame(width: isSelected ? 19 : 15, height: isSelected ? 19 : 15)
         }
     }
@@ -241,9 +230,7 @@ private struct SelectedHistoryPlaceCard: View {
             Spacer()
 
             if let latestDay = summary.latestDay {
-                NavigationLink {
-                    HistoricalDayDetailView(day: latestDay)
-                } label: {
+                NavigationLink(value: latestDay) {
                     HStack(spacing: 4) {
                         Text("最後の記録")
                         Image(systemName: "chevron.right")
@@ -256,10 +243,7 @@ private struct SelectedHistoryPlaceCard: View {
             }
         }
         .padding(14)
-        .background(
-            Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
-        )
+        .daytraceGlassSurface(cornerRadius: DS.contentCornerRadius)
     }
 }
 
@@ -271,7 +255,7 @@ private struct HistoryPlaceRow: View {
         HStack(spacing: 11) {
             Image(systemName: summary.isPrivate ? "lock.circle" : "mappin.circle")
                 .font(.title3)
-                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                .foregroundStyle(isSelected ? Color.daytraceInk : .secondary)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(summary.displayName)
@@ -283,8 +267,17 @@ private struct HistoryPlaceRow: View {
             }
 
             Spacer()
+
+            Label(
+                isSelected ? "表示中" : "地図で見る",
+                systemImage: isSelected ? "checkmark.circle.fill" : "map"
+            )
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(isSelected ? Color.daytraceInk : .secondary)
         }
-        .padding(.vertical, 8)
+        .frame(minHeight: 44)
+        .padding(.vertical, 6)
         .contentShape(Rectangle())
+        .accessibilityHint("地図をこの場所へ移動します")
     }
 }

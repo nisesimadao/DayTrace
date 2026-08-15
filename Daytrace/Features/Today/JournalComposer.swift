@@ -1,4 +1,4 @@
-#if canImport(JournalingSuggestions)
+#if canImport(JournalingSuggestions) && !NO_JOURNALING_SUGGESTIONS
 import JournalingSuggestions
 #endif
 import Foundation
@@ -15,6 +15,10 @@ struct JournalComposer: View {
     @State private var bodyText = ""
     @State private var isSuggestionPickerPresented = false
     @State private var isMomentNotePresented = false
+    @State private var isSaveErrorPresented = false
+    @State private var saveErrorMessage = ""
+    @State private var savedBodyText: String?
+    @State private var notePendingDeletion: MomentNote?
     @FocusState private var isFocused: Bool
 
     private var targetDay: CalendarDay {
@@ -28,13 +32,32 @@ struct JournalComposer: View {
         }
     }
 
+    private var trimmedBodyText: String {
+        bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var persistedBodyText: String {
+        savedBodyText ?? existingJournal?.body.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var canSaveJournal: Bool {
+        existingJournal != nil || !trimmedBodyText.isEmpty
+    }
+
+    private var hasUnsavedJournalChanges: Bool {
+        trimmedBodyText != persistedBodyText
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Divider()
-                .padding(.bottom, 8)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("今日を残す")
+                    .font(.title2.bold())
 
-            Text("今日を残す")
-                .font(.title2.bold())
+                Text("一文だけでも、あとで一日を連れてきてくれます。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
 
             if !dayNotes.isEmpty {
                 VStack(alignment: .leading, spacing: 9) {
@@ -43,41 +66,35 @@ struct JournalComposer: View {
                         .foregroundStyle(.secondary)
 
                     ForEach(dayNotes) { note in
-                        MomentNoteRow(note: note, onDelete: { delete(note) })
+                        MomentNoteRow(note: note) {
+                            notePendingDeletion = note
+                        }
                     }
                 }
             }
 
-            TextEditor(text: $bodyText)
+            TextField(
+                "今日の日記",
+                text: $bodyText,
+                prompt: Text("今日はどんな日だった？").foregroundStyle(.secondary),
+                axis: .vertical
+            )
                 .focused($isFocused)
                 .font(.body)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 130)
-                .padding(12)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous))
-                .overlay(alignment: .topLeading) {
-                    if bodyText.isEmpty {
-                        Text("今日はどんな日だった？")
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 17)
-                            .padding(.vertical, 20)
-                            .allowsHitTesting(false)
-                    }
-                }
+                .lineLimit(4...12)
+                .padding(14)
+                .background(Color(.tertiarySystemGroupedBackground), in: .rect(cornerRadius: DS.controlCornerRadius))
 
             HStack(spacing: 10) {
+#if canImport(JournalingSuggestions) && !NO_JOURNALING_SUGGESTIONS
                 Button {
                     isSuggestionPickerPresented = true
                 } label: {
                     Label("思い出す", systemImage: "sparkles")
                 }
                 .buttonStyle(.daytraceGlass)
-                .disabled(!JournalingSuggestionsBridge.isAvailable)
-                .accessibilityHint(
-                    JournalingSuggestionsBridge.isAvailable
-                        ? "システムの振り返り候補を表示します"
-                        : "この環境では振り返り候補を利用できません"
-                )
+                .accessibilityHint("システムの振り返り候補を表示します")
+#endif
 
                 Button {
                     isMomentNotePresented = true
@@ -89,40 +106,83 @@ struct JournalComposer: View {
 
                 Spacer()
 
-                if existingJournal != nil || !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !hasUnsavedJournalChanges && !persistedBodyText.isEmpty {
+                    Label("保存済み", systemImage: "checkmark.circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if canSaveJournal {
                     Button("保存", action: save)
-                        .fontWeight(.semibold)
+                        .bold()
                         .buttonStyle(.daytraceGlassProminent)
+                        .disabled(!hasUnsavedJournalChanges)
                 }
             }
 
             OnThisDaySection()
         }
+        .padding(DS.cardPadding)
+        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
         .onAppear {
             bodyText = existingJournal?.body ?? ""
+            savedBodyText = existingJournal?.body.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         .sheet(isPresented: $isMomentNotePresented) {
             MomentNoteComposerSheet()
         }
+        .confirmationDialog(
+            "今メモを削除しますか？",
+            isPresented: Binding(
+                get: { notePendingDeletion != nil },
+                set: { if !$0 { notePendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("削除", role: .destructive) {
+                guard let note = notePendingDeletion else { return }
+                notePendingDeletion = nil
+                delete(note)
+            }
+            Button("キャンセル", role: .cancel) {
+                notePendingDeletion = nil
+            }
+        }
+        .alert("日記を保存できません", isPresented: $isSaveErrorPresented) { } message: {
+            Text(saveErrorMessage)
+        }
+#if canImport(JournalingSuggestions) && !NO_JOURNALING_SUGGESTIONS
         .modifier(JournalingSuggestionsBridge(
             isPresented: $isSuggestionPickerPresented,
             onSelection: appendSuggestion
         ))
+#endif
     }
 
     private func save() {
-        try? JournalEditingService().save(
-            day: day,
-            body: bodyText,
-            existingJournal: existingJournal,
-            in: modelContext
-        )
-        isFocused = false
+        do {
+            try JournalEditingService().save(
+                day: day,
+                body: bodyText,
+                existingJournal: existingJournal,
+                in: modelContext
+            )
+            savedBodyText = trimmedBodyText
+            isFocused = false
+        } catch {
+            saveErrorMessage = error.localizedDescription
+            isSaveErrorPresented = true
+        }
     }
 
     private func delete(_ note: MomentNote) {
-        modelContext.delete(note)
-        try? modelContext.save()
+        do {
+            modelContext.delete(note)
+            try modelContext.save()
+        } catch {
+            saveErrorMessage = error.localizedDescription
+            isSaveErrorPresented = true
+        }
     }
 
     @MainActor
@@ -169,6 +229,8 @@ private struct MomentNoteComposerSheet: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var text = ""
+    @State private var isSaveErrorPresented = false
+    @State private var saveErrorMessage = ""
     @FocusState private var isFocused: Bool
 
     private var trimmedText: String {
@@ -182,25 +244,20 @@ private struct MomentNoteComposerSheet: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
 
-                TextEditor(text: $text)
+                TextField(
+                    "今メモ",
+                    text: $text,
+                    prompt: Text("あとで思い出したいこと").foregroundStyle(.secondary),
+                    axis: .vertical
+                )
                     .focused($isFocused)
                     .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 120)
-                    .padding(12)
+                    .lineLimit(4...10)
+                    .padding(14)
                     .background(
                         Color(.secondarySystemBackground),
-                        in: RoundedRectangle(cornerRadius: DS.contentCornerRadius, style: .continuous)
+                        in: .rect(cornerRadius: DS.contentCornerRadius)
                     )
-                    .overlay(alignment: .topLeading) {
-                        if text.isEmpty {
-                            Text("あとで思い出したいこと")
-                                .foregroundStyle(.tertiary)
-                                .padding(.horizontal, 17)
-                                .padding(.vertical, 20)
-                                .allowsHitTesting(false)
-                        }
-                    }
 
                 Spacer()
             }
@@ -213,24 +270,32 @@ private struct MomentNoteComposerSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存", action: save)
-                        .fontWeight(.semibold)
+                        .bold()
                         .disabled(trimmedText.isEmpty)
                 }
             }
         }
         .presentationDetents([.medium])
         .onAppear { isFocused = true }
+        .alert("メモを保存できません", isPresented: $isSaveErrorPresented) { } message: {
+            Text(saveErrorMessage)
+        }
     }
 
     private func save() {
         guard !trimmedText.isEmpty else { return }
-        modelContext.insert(MomentNote(
-            timestamp: .now,
-            body: trimmedText,
-            timeZoneIdentifier: TimeZone.current.identifier
-        ))
-        try? modelContext.save()
-        dismiss()
+        do {
+            modelContext.insert(MomentNote(
+                timestamp: .now,
+                body: trimmedText,
+                timeZoneIdentifier: TimeZone.current.identifier
+            ))
+            try modelContext.save()
+            dismiss()
+        } catch {
+            saveErrorMessage = error.localizedDescription
+            isSaveErrorPresented = true
+        }
     }
 }
 
@@ -315,9 +380,7 @@ private struct OnThisDaySection: View {
                 Text("\(memory.yearsAgo)年前の今日")
                     .font(.title3.bold())
 
-                NavigationLink {
-                    HistoricalDayDetailView(day: memory.day)
-                } label: {
+                NavigationLink(value: memory.day) {
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 7) {
                             Text("\(memory.day.year)年\(memory.day.month)月\(memory.day.day)日")
@@ -489,29 +552,18 @@ struct JournalEditingService {
     }
 }
 
+#if canImport(JournalingSuggestions) && !NO_JOURNALING_SUGGESTIONS
 private struct JournalingSuggestionsBridge: ViewModifier {
     @Binding var isPresented: Bool
     let onSelection: @MainActor (String, Date?) -> Void
 
-    static var isAvailable: Bool {
-#if canImport(JournalingSuggestions)
-        true
-#else
-        false
-#endif
-    }
-
-    @ViewBuilder
     func body(content: Content) -> some View {
-#if canImport(JournalingSuggestions)
         content
             .journalingSuggestionsPicker(isPresented: $isPresented) { suggestion in
                 await MainActor.run {
                     onSelection(suggestion.title, suggestion.date?.start)
                 }
             }
-#else
-        content
-#endif
     }
 }
+#endif

@@ -57,6 +57,7 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
     private var configured = false
     private var standardUpdatesActive = false
     private var nextLocationSource: EvidenceSource?
+    private var lastPersistedLocation: CLLocation?
 
     private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
     private(set) var accuracyAuthorization: CLAccuracyAuthorization = .reducedAccuracy
@@ -130,8 +131,9 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         manager.startMonitoringSignificantLocationChanges()
         isRecording = true
 
-        if UserDefaults.standard.bool(forKey: "detailedRoutesEnabled") {
-            startDetailedUpdates()
+        let sensitivity = TrackingSensitivity.current
+        if sensitivity.usesContinuousUpdates {
+            startDetailedUpdates(for: sensitivity)
         } else {
             stopDetailedUpdates()
             requestForegroundSnapshot()
@@ -141,21 +143,35 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
     }
 
     func setDetailedRoutesEnabled(_ enabled: Bool) {
-        UserDefaults.standard.set(enabled, forKey: "detailedRoutesEnabled")
+        TrackingSensitivity.persist(enabled ? .highPrecision : .lowPower)
         guard isRecording else { return }
-        enabled ? startDetailedUpdates() : stopDetailedUpdates()
+        enabled ? startDetailedUpdates(for: TrackingSensitivity.current) : stopDetailedUpdates()
     }
 
-    func applyRetentionPolicy(days: Int) {
-        UserDefaults.standard.set(days, forKey: "rawEvidenceRetentionDays")
-        guard let context = modelContext else { return }
+    func setTrackingSensitivity(_ sensitivity: TrackingSensitivity) {
+        TrackingSensitivity.persist(sensitivity)
+        guard isRecording else { return }
+        if sensitivity.usesContinuousUpdates {
+            startDetailedUpdates(for: sensitivity)
+        } else {
+            stopDetailedUpdates()
+            requestForegroundSnapshot()
+        }
+    }
+
+    func applyRetentionPolicy(days: Int) throws {
+        guard let context = modelContext else {
+            UserDefaults.standard.set(days, forKey: "rawEvidenceRetentionDays")
+            return
+        }
 
         let retention = RawEvidenceRetentionService()
-        try? retention.backfillLegacyVisits(in: context)
-        try? retention.prune(
+        try retention.backfillLegacyVisits(in: context)
+        try retention.prune(
             in: context,
             retentionDays: days
         )
+        UserDefaults.standard.set(days, forKey: "rawEvidenceRetentionDays")
         lastEvidenceAt = nil
         restoreLastEvidenceDateIfNeeded()
         refreshHealth()
@@ -222,6 +238,9 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
             ) else {
                 continue
             }
+            guard shouldPersist(location: location, source: source) else {
+                continue
+            }
 
             context.insert(LocationEvidence(
                 timestamp: location.timestamp,
@@ -234,10 +253,11 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
                 timeZoneIdentifier: zone
             ))
             lastEvidenceAt = max(lastEvidenceAt ?? .distantPast, location.timestamp)
+            lastPersistedLocation = location
         }
 
         try? context.save()
-        try? TimelineEngine().rebuildRecentTimeline(in: context)
+        rebuildTimelineAndSuggestPlaces(in: context)
         refreshHealth()
     }
 
@@ -269,7 +289,7 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         let freshestDate = adjusted.departure ?? adjusted.arrival ?? observedAt
         lastEvidenceAt = max(lastEvidenceAt ?? .distantPast, freshestDate)
         try? context.save()
-        try? TimelineEngine().rebuildRecentTimeline(in: context)
+        rebuildTimelineAndSuggestPlaces(in: context)
         refreshHealth()
     }
 
@@ -282,6 +302,13 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
 
     private var isAuthorized: Bool {
         authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse
+    }
+
+    private func rebuildTimelineAndSuggestPlaces(in context: ModelContext) {
+        try? TimelineEngine().rebuildRecentTimeline(in: context)
+        Task { @MainActor in
+            await AutomaticPlaceSuggestionService.annotateUnresolvedRecentStays(in: context)
+        }
     }
 
     private var retentionDaysFromDefaults: Int {
@@ -310,14 +337,14 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         UserDefaults.standard.set(true, forKey: Self.alwaysAuthorizationRequestedKey)
     }
 
-    private func startDetailedUpdates() {
-        guard !standardUpdatesActive else { return }
-        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-        manager.distanceFilter = 25
+    private func startDetailedUpdates(for sensitivity: TrackingSensitivity) {
+        manager.desiredAccuracy = sensitivity.desiredAccuracy
+        manager.distanceFilter = sensitivity.distanceFilter
         if authorizationStatus == .authorizedAlways {
             manager.allowsBackgroundLocationUpdates = true
             manager.showsBackgroundLocationIndicator = false
         }
+        guard !standardUpdatesActive else { return }
         manager.startUpdatingLocation()
         standardUpdatesActive = true
     }
@@ -341,7 +368,22 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
             sortBy: [SortDescriptor(\LocationEvidence.timestamp, order: .reverse)]
         )
         locationDescriptor.fetchLimit = 1
-        let latestLocation = try? context.fetch(locationDescriptor).first?.timestamp
+        let latestLocationEvidence = try? context.fetch(locationDescriptor).first
+        let latestLocation = latestLocationEvidence?.timestamp
+        if let latestLocationEvidence {
+            lastPersistedLocation = CLLocation(
+                coordinate: CLLocationCoordinate2D(
+                    latitude: latestLocationEvidence.latitude,
+                    longitude: latestLocationEvidence.longitude
+                ),
+                altitude: 0,
+                horizontalAccuracy: latestLocationEvidence.horizontalAccuracy,
+                verticalAccuracy: -1,
+                course: latestLocationEvidence.course,
+                speed: latestLocationEvidence.speed,
+                timestamp: latestLocationEvidence.timestamp
+            )
+        }
 
         var visitDescriptor = FetchDescriptor<VisitEvidence>(
             sortBy: [SortDescriptor(\VisitEvidence.observedAt, order: .reverse)]
@@ -353,6 +395,30 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         lastEvidenceAt = [latestLocation, latestVisitDate]
             .compactMap { $0 }
             .max()
+    }
+
+    private func shouldPersist(location: CLLocation, source: EvidenceSource) -> Bool {
+        guard standardUpdatesActive, source == .standardLocation else {
+            return true
+        }
+        guard let previous = lastPersistedLocation else {
+            return true
+        }
+
+        let sensitivity = TrackingSensitivity.current
+        let elapsed = location.timestamp.timeIntervalSince(previous.timestamp)
+        guard elapsed >= 0 else { return false }
+
+        if elapsed >= sensitivity.persistedStationarySampleInterval {
+            return true
+        }
+
+        let distance = location.distance(from: previous)
+        guard elapsed >= sensitivity.persistedRouteMinimumInterval else {
+            return false
+        }
+
+        return distance >= sensitivity.persistedRouteMinimumDistance
     }
 
     private func upsertVisit(

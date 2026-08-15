@@ -183,6 +183,115 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testAutomaticPlaceSuggestionSurvivesTimelineRebuild() throws {
+        let context = try makeContext()
+        let visit = insertVisit(arrival: baseTime, departure: nil, observedAt: baseTime, in: context)
+        let episode = TimelineEpisode(
+            kind: .stay,
+            startDate: baseTime,
+            endDate: nil,
+            title: "未設定の場所",
+            latitude: visit.latitude,
+            longitude: visit.longitude,
+            confidence: .medium,
+            sourceVisitID: visit.id,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(episode)
+        context.insert(UserAssertion(
+            episodeID: episode.id,
+            type: .automaticPlaceSuggestion,
+            replacementTitle: "近くのカフェ"
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60))
+
+        let rebuilt = try stay(for: visit.id, in: context)
+        XCTAssertEqual(rebuilt.title, "近くのカフェ")
+        XCTAssertEqual(rebuilt.subtitle, "近くのスポット候補・確認してください")
+        XCTAssertNil(rebuilt.placeID)
+    }
+
+    @MainActor
+    func testLearnedPlaceOverridesAutomaticPlaceSuggestion() throws {
+        let context = try makeContext()
+        let place = PlaceRecord(
+            name: "家",
+            latitude: 34.66,
+            longitude: 133.92,
+            radius: 100,
+            source: .userConfirmed
+        )
+        context.insert(place)
+        let visit = insertVisit(arrival: baseTime, departure: nil, observedAt: baseTime, in: context)
+        let episode = TimelineEpisode(
+            kind: .stay,
+            startDate: baseTime,
+            endDate: nil,
+            title: "未設定の場所",
+            latitude: visit.latitude,
+            longitude: visit.longitude,
+            confidence: .medium,
+            sourceVisitID: visit.id,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(episode)
+        context.insert(UserAssertion(
+            episodeID: episode.id,
+            type: .automaticPlaceSuggestion,
+            replacementTitle: "近くのカフェ"
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60))
+
+        let rebuilt = try stay(for: visit.id, in: context)
+        XCTAssertEqual(rebuilt.title, "家")
+        XCTAssertEqual(rebuilt.placeID, place.id)
+    }
+
+    @MainActor
+    func testDepartureOnlyVisitUsesEarlierRawLocationAsStayStart() throws {
+        let context = try makeContext()
+        let home = PlaceRecord(
+            name: "家",
+            latitude: 34.66,
+            longitude: 133.92,
+            radius: 100,
+            source: .userConfirmed
+        )
+        context.insert(home)
+        context.insert(locationEvidence(
+            at: baseTime,
+            latitude: 34.66,
+            longitude: 133.92,
+            speed: -1
+        ))
+        let departure = baseTime.addingTimeInterval(90 * 60)
+        let visit = insertVisit(
+            arrival: nil,
+            departure: departure,
+            observedAt: departure.addingTimeInterval(60),
+            latitude: 34.660_01,
+            longitude: 133.920_01,
+            accuracy: 20,
+            in: context
+        )
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: departure.addingTimeInterval(60 * 60))
+
+        let stay = try stay(for: visit.id, in: context)
+        XCTAssertEqual(stay.title, "家")
+        XCTAssertEqual(stay.placeID, home.id)
+        XCTAssertEqual(stay.startDate, baseTime)
+        XCTAssertEqual(stay.endDate, departure)
+    }
+
+    @MainActor
     func testLowAccuracyVisitDoesNotAutoResolvePlace() throws {
         let context = try makeContext()
         context.insert(PlaceRecord(
@@ -209,6 +318,64 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertNil(stay.placeID)
         XCTAssertEqual(stay.title, "未設定の場所")
         XCTAssertEqual(stay.confidence, .low)
+    }
+
+    @MainActor
+    func testRebuildPreservesExistingPlaceWhenLaterAccuracyIsTooLowToResolve() throws {
+        let context = try makeContext()
+        let home = PlaceRecord(
+            name: "家",
+            latitude: 34.66,
+            longitude: 133.92,
+            radius: 100,
+            source: .userConfirmed
+        )
+        context.insert(home)
+        let visit = insertVisit(
+            arrival: baseTime,
+            departure: baseTime.addingTimeInterval(60 * 60),
+            observedAt: baseTime,
+            accuracy: 30,
+            in: context
+        )
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60 * 60))
+        let stay = try stay(for: visit.id, in: context)
+        XCTAssertEqual(stay.title, "家")
+        XCTAssertEqual(stay.placeID, home.id)
+
+        visit.horizontalAccuracy = 800
+        try context.save()
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(2 * 60 * 60))
+
+        XCTAssertEqual(stay.title, "家")
+        XCTAssertEqual(stay.placeID, home.id)
+        XCTAssertNotEqual(stay.title, "未設定の場所")
+    }
+
+    @MainActor
+    func testRebuildKeepsEarlierKnownArrivalWhenVisitArrivalMovesLater() throws {
+        let context = try makeContext()
+        let visit = insertVisit(
+            arrival: baseTime,
+            departure: baseTime.addingTimeInterval(2 * 60 * 60),
+            observedAt: baseTime,
+            in: context
+        )
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60 * 60))
+        let stay = try stay(for: visit.id, in: context)
+        XCTAssertEqual(stay.startDate, baseTime)
+
+        visit.arrivalDate = baseTime.addingTimeInterval(60 * 60)
+        visit.observedAt = baseTime.addingTimeInterval(60 * 60)
+        try context.save()
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(3 * 60 * 60))
+
+        XCTAssertEqual(stay.startDate, baseTime)
+        XCTAssertEqual(stay.endDate, baseTime.addingTimeInterval(2 * 60 * 60))
     }
 
     @MainActor
@@ -678,7 +845,7 @@ final class DayProjectionTests: XCTestCase {
         let secondArrival = firstDeparture.addingTimeInterval(30 * 60)
         insertTransitionVisits(firstDeparture: firstDeparture, secondArrival: secondArrival, in: context)
         context.insert(locationEvidence(
-            at: firstDeparture.addingTimeInterval(10 * 60),
+            at: firstDeparture,
             latitude: 34.67,
             longitude: 133.93,
             speed: 4,
@@ -692,6 +859,433 @@ final class DayProjectionTests: XCTestCase {
         let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
         XCTAssertEqual(episodes.filter { $0.kind == .move }.count, 1)
         XCTAssertEqual(episodes.filter { $0.kind == .gap }.count, 0)
+    }
+
+    @MainActor
+    func testTransitionUsesStayBoundariesWhenFirstLocationSampleIsLate() throws {
+        let context = try makeContext()
+        let firstDeparture = baseTime.addingTimeInterval(60 * 60)
+        let firstMovingSample = firstDeparture.addingTimeInterval(2 * 60 * 60)
+        let secondArrival = firstDeparture.addingTimeInterval(2 * 60 * 60 + 38 * 60)
+        insertTransitionVisits(firstDeparture: firstDeparture, secondArrival: secondArrival, in: context)
+        context.insert(locationEvidence(
+            at: firstMovingSample,
+            latitude: 34.67,
+            longitude: 133.93,
+            speed: 12,
+            course: 90,
+            source: .standardLocation
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: secondArrival.addingTimeInterval(60 * 60))
+
+        let transitions = try context.fetch(FetchDescriptor<TimelineEpisode>())
+            .filter { $0.kind != .stay }
+            .sorted { $0.startDate < $1.startDate }
+        XCTAssertEqual(transitions.map(\.kind), [.move])
+        XCTAssertEqual(transitions[0].startDate, firstDeparture)
+        XCTAssertEqual(transitions[0].endDate, secondArrival)
+        XCTAssertEqual(
+            TimelineFormatting.duration(from: transitions[0].startDate, to: transitions[0].endDate),
+            "約2時間38分"
+        )
+    }
+
+    @MainActor
+    func testDayRouteProjectionKeepsMovingSamplesAsRouteVertices() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let secondStay = timelineStay(
+            start: baseTime.addingTimeInterval(90 * 60),
+            end: baseTime.addingTimeInterval(120 * 60),
+            latitude: 34.700,
+            longitude: 133.960
+        )
+        let movingSample = locationEvidence(
+            at: baseTime.addingTimeInterval(75 * 60),
+            latitude: 34.680,
+            longitude: 133.940,
+            speed: 12,
+            source: .standardLocation
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [secondStay, firstStay],
+            locationEvidence: [movingSample]
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .movementSample, .stay])
+        XCTAssertEqual(points.map(\.latitude), [34.660, 34.680, 34.700])
+        XCTAssertEqual(points.map(\.longitude), [133.920, 133.940, 133.960])
+    }
+
+    @MainActor
+    func testDayRouteProjectionDoesNotTreatStaySamplesAsRouteVertices() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let secondStay = timelineStay(
+            start: baseTime.addingTimeInterval(90 * 60),
+            end: baseTime.addingTimeInterval(120 * 60),
+            latitude: 34.700,
+            longitude: 133.960
+        )
+        let staySample = locationEvidence(
+            at: baseTime.addingTimeInterval(30 * 60),
+            latitude: 34.661,
+            longitude: 133.921
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [firstStay, secondStay],
+            locationEvidence: [staySample]
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .stay])
+    }
+
+    @MainActor
+    func testDayRouteProjectionFiltersLowQualityMovingSamples() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let secondStay = timelineStay(
+            start: baseTime.addingTimeInterval(90 * 60),
+            end: baseTime.addingTimeInterval(120 * 60),
+            latitude: 34.700,
+            longitude: 133.960
+        )
+        let inaccurateSample = LocationEvidence(
+            timestamp: baseTime.addingTimeInterval(75 * 60),
+            latitude: 34.680,
+            longitude: 133.940,
+            horizontalAccuracy: 1_500,
+            speed: 12,
+            course: 90,
+            source: .standardLocation,
+            timeZoneIdentifier: zone
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [firstStay, secondStay],
+            locationEvidence: [inaccurateSample]
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .stay])
+    }
+
+    @MainActor
+    func testDayRouteProjectionThinsClusteredMovingSamples() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let secondStay = timelineStay(
+            start: baseTime.addingTimeInterval(120 * 60),
+            end: baseTime.addingTimeInterval(150 * 60),
+            latitude: 34.700,
+            longitude: 133.960
+        )
+        let clusteredSample = locationEvidence(
+            at: baseTime.addingTimeInterval(75 * 60),
+            latitude: 34.661,
+            longitude: 133.921,
+            speed: 8,
+            source: .standardLocation
+        )
+        let distantSample = locationEvidence(
+            at: baseTime.addingTimeInterval(90 * 60),
+            latitude: 34.680,
+            longitude: 133.940,
+            speed: 12,
+            source: .standardLocation
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [firstStay, secondStay],
+            locationEvidence: [clusteredSample, distantSample],
+            options: .preview
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .movementSample, .stay])
+        XCTAssertEqual(points.map(\.latitude), [34.660, 34.680, 34.700])
+    }
+
+    @MainActor
+    func testPreviewRouteKeepsCurrentLocationConnection() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let currentLocation = CurrentLocationContext(
+            startDate: baseTime.addingTimeInterval(90 * 60),
+            lastEvidenceAt: baseTime.addingTimeInterval(91 * 60),
+            latitude: 34.700,
+            longitude: 133.960,
+            horizontalAccuracy: 20,
+            timeZoneIdentifier: zone
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [firstStay],
+            locationEvidence: [],
+            currentLocation: currentLocation,
+            options: .preview
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .currentLocation])
+    }
+
+    @MainActor
+    func testDetailRouteCanAppendCurrentLocation() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let currentLocation = CurrentLocationContext(
+            startDate: baseTime.addingTimeInterval(90 * 60),
+            lastEvidenceAt: baseTime.addingTimeInterval(91 * 60),
+            latitude: 34.700,
+            longitude: 133.960,
+            horizontalAccuracy: 20,
+            timeZoneIdentifier: zone
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [firstStay],
+            locationEvidence: [],
+            currentLocation: currentLocation,
+            options: .detail
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .currentLocation])
+    }
+
+    @MainActor
+    func testBalancedTrackingInfersTwentyMinuteStopFromLocationCluster() throws {
+        let context = try makeContext()
+        context.insert(locationEvidence(at: baseTime, latitude: 34.660_00, longitude: 133.920_00, speed: 0.4))
+        context.insert(locationEvidence(
+            at: baseTime.addingTimeInterval(10 * 60),
+            latitude: 34.660_12,
+            longitude: 133.920_10,
+            speed: 0.2
+        ))
+        context.insert(locationEvidence(
+            at: baseTime.addingTimeInterval(20 * 60),
+            latitude: 34.660_05,
+            longitude: 133.920_08,
+            speed: 0.1
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(
+            in: context,
+            now: baseTime.addingTimeInterval(60 * 60),
+            trackingSensitivity: .balanced
+        )
+
+        let inferredVisit = try XCTUnwrap(try context.fetch(FetchDescriptor<VisitEvidence>())
+            .first { $0.source == .inferredStop })
+        let stay = try stay(for: inferredVisit.id, in: context)
+        XCTAssertEqual(stay.title, "推定した停車")
+        XCTAssertEqual(stay.confidence, .low)
+        XCTAssertEqual(stay.startDate, baseTime)
+        XCTAssertEqual(stay.endDate, baseTime.addingTimeInterval(20 * 60))
+    }
+
+    @MainActor
+    func testInferredStopDoesNotDuplicateRealVisit() throws {
+        let context = try makeContext()
+        insertVisit(
+            arrival: baseTime,
+            departure: baseTime.addingTimeInterval(30 * 60),
+            observedAt: baseTime.addingTimeInterval(30 * 60),
+            in: context
+        )
+        context.insert(locationEvidence(at: baseTime, latitude: 34.660_00, longitude: 133.920_00, speed: 0))
+        context.insert(locationEvidence(
+            at: baseTime.addingTimeInterval(10 * 60),
+            latitude: 34.660_08,
+            longitude: 133.920_04,
+            speed: 0
+        ))
+        context.insert(locationEvidence(
+            at: baseTime.addingTimeInterval(20 * 60),
+            latitude: 34.660_12,
+            longitude: 133.920_05,
+            speed: 0
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(
+            in: context,
+            now: baseTime.addingTimeInterval(60 * 60),
+            trackingSensitivity: .balanced
+        )
+
+        let visits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        let stays = try context.fetch(FetchDescriptor<TimelineEpisode>()).filter { $0.kind == .stay }
+        XCTAssertEqual(visits.filter { $0.source == .inferredStop }.count, 0)
+        XCTAssertEqual(stays.count, 1)
+        XCTAssertEqual(stays.first?.title, "未設定の場所")
+    }
+
+    @MainActor
+    func testFreshNearbyEvidenceProjectsCurrentLocationSinceClusterStart() throws {
+        let now = baseTime.addingTimeInterval(10 * 60)
+        let evidence = [
+            locationEvidence(at: baseTime, latitude: 34.660_00, longitude: 133.920_00),
+            locationEvidence(
+                at: baseTime.addingTimeInterval(8 * 60),
+                latitude: 34.660_15,
+                longitude: 133.920_10,
+                source: .significantChange
+            ),
+        ]
+
+        let current = try XCTUnwrap(CurrentLocationProjection.project(
+            evidence: evidence,
+            now: now,
+            dayStart: baseTime.addingTimeInterval(-60 * 60)
+        ))
+
+        XCTAssertEqual(current.startDate, baseTime)
+        XCTAssertEqual(current.lastEvidenceAt, baseTime.addingTimeInterval(8 * 60))
+        XCTAssertEqual(current.latitude, 34.660_15)
+    }
+
+    @MainActor
+    func testCurrentLocationProjectionDoesNotShowStaleEvidence() {
+        let evidence = [locationEvidence(at: baseTime)]
+
+        XCTAssertNil(CurrentLocationProjection.project(
+            evidence: evidence,
+            now: baseTime.addingTimeInterval(21 * 60),
+            dayStart: baseTime.addingTimeInterval(-60 * 60)
+        ))
+    }
+
+    @MainActor
+    func testCurrentLocationProjectionStopsAtPreviousPlace() throws {
+        let recent = baseTime.addingTimeInterval(10 * 60)
+        let evidence = [
+            locationEvidence(at: baseTime, latitude: 34.66, longitude: 133.92),
+            locationEvidence(at: recent, latitude: 34.68, longitude: 133.94),
+        ]
+
+        let current = try XCTUnwrap(CurrentLocationProjection.project(
+            evidence: evidence,
+            now: recent.addingTimeInterval(60),
+            dayStart: baseTime.addingTimeInterval(-60 * 60)
+        ))
+
+        XCTAssertEqual(current.startDate, recent)
+    }
+
+    @MainActor
+    func testRepositionAssertionSurvivesTimelineRebuild() throws {
+        let context = try makeContext()
+        let visit = insertVisit(
+            arrival: baseTime,
+            departure: baseTime.addingTimeInterval(60 * 60),
+            observedAt: baseTime,
+            in: context
+        )
+        try context.save()
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60 * 60))
+        let stay = try stay(for: visit.id, in: context)
+
+        let correctedLatitude = 34.670_5
+        let correctedLongitude = 133.930_5
+        try TimelineEditingService().saveStay(
+            stay,
+            title: stay.title,
+            startDate: stay.startDate,
+            endDate: stay.endDate,
+            latitude: correctedLatitude,
+            longitude: correctedLongitude,
+            confirmLocation: false,
+            in: context
+        )
+
+        var assertions = try context.fetch(FetchDescriptor<UserAssertion>())
+        let reposition = try XCTUnwrap(assertions.first { $0.type == .reposition && $0.isActive })
+        XCTAssertEqual(reposition.replacementLatitude, correctedLatitude)
+        XCTAssertEqual(reposition.replacementLongitude, correctedLongitude)
+
+        visit.latitude = 34.65
+        visit.longitude = 133.91
+        try context.save()
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60 * 60))
+
+        XCTAssertEqual(stay.latitude, correctedLatitude)
+        XCTAssertEqual(stay.longitude, correctedLongitude)
+        assertions = try context.fetch(FetchDescriptor<UserAssertion>())
+        XCTAssertEqual(assertions.filter { $0.type == .reposition && $0.isActive }.count, 1)
+    }
+
+    @MainActor
+    func testMergePlaceSelectionLinksStayToExistingPlace() throws {
+        let context = try makeContext()
+        let canonicalPlace = PlaceRecord(
+            name: "家",
+            latitude: 34.670,
+            longitude: 133.930,
+            radius: 120,
+            source: .userConfirmed
+        )
+        context.insert(canonicalPlace)
+        let visit = insertVisit(
+            arrival: baseTime,
+            departure: baseTime.addingTimeInterval(60 * 60),
+            observedAt: baseTime,
+            latitude: 34.671,
+            longitude: 133.931,
+            in: context
+        )
+        try context.save()
+        try TimelineEngine().rebuildRecentTimeline(in: context, now: baseTime.addingTimeInterval(60 * 60))
+        let stay = try stay(for: visit.id, in: context)
+
+        try TimelineEditingService().saveStay(
+            stay,
+            title: stay.title,
+            startDate: stay.startDate,
+            endDate: stay.endDate,
+            latitude: stay.latitude,
+            longitude: stay.longitude,
+            confirmLocation: false,
+            mergePlaceID: canonicalPlace.id,
+            in: context
+        )
+
+        XCTAssertEqual(stay.title, "家")
+        XCTAssertEqual(stay.placeID, canonicalPlace.id)
+        XCTAssertEqual(stay.latitude, canonicalPlace.latitude)
+        XCTAssertEqual(stay.longitude, canonicalPlace.longitude)
+
+        let assertions = try context.fetch(FetchDescriptor<UserAssertion>())
+        XCTAssertTrue(assertions.contains { $0.type == .rename && $0.isActive && $0.replacementTitle == "家" })
+        XCTAssertTrue(assertions.contains { $0.type == .confirm && $0.isActive })
+        XCTAssertTrue(assertions.contains { $0.type == .reposition && $0.isActive })
     }
 
     @MainActor
@@ -773,11 +1367,30 @@ final class DayProjectionTests: XCTestCase {
             endDate: (start ?? baseTime).addingTimeInterval(60 * 60),
             title: title,
             confidence: .high,
-            sourceVersion: 5,
+            sourceVersion: 6,
             timeZoneIdentifier: zone
         )
         context.insert(episode)
         return episode
+    }
+
+    private func timelineStay(
+        start: Date,
+        end: Date?,
+        latitude: Double,
+        longitude: Double
+    ) -> TimelineEpisode {
+        TimelineEpisode(
+            kind: .stay,
+            startDate: start,
+            endDate: end,
+            title: "滞在",
+            latitude: latitude,
+            longitude: longitude,
+            confidence: .high,
+            sourceVersion: 6,
+            timeZoneIdentifier: zone
+        )
     }
 
     @MainActor

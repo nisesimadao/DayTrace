@@ -2,7 +2,6 @@ import CoreLocation
 import Foundation
 import SwiftData
 import SwiftUI
-import UIKit
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
@@ -28,6 +27,14 @@ struct SettingsView: View {
     @State private var appLockErrorMessage: String?
     @State private var privacyActionErrorMessage: String?
     @State private var isHistoryDeletionConfirmationPresented = false
+    @State private var selectedRawEvidenceRetentionDays: Int
+    @State private var pendingRawEvidenceRetentionDays: Int?
+
+    init() {
+        _selectedRawEvidenceRetentionDays = State(
+            initialValue: UserDefaults.standard.object(forKey: "rawEvidenceRetentionDays") as? Int ?? 90
+        )
+    }
 
     private var suppressedCount: Int {
         TimelineVisibility.suppressedEpisodeIDs(from: assertions).count
@@ -58,6 +65,25 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    HStack(spacing: 14) {
+                        DaytraceBrandMark(size: 52)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            DaytraceWordmark(markSize: 24)
+                            Text("日々の記憶を、静かに残す")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                .listRowBackground(Color.clear)
+
+#if DEBUG
+                DebugDemoDataSettingsSection()
+#endif
+
                 TrackingDiagnosticsSection()
 
                 ReviewReminderSettingsSection()
@@ -76,14 +102,14 @@ struct SettingsView: View {
                             Text(appLockErrorMessage ?? "")
                         }
 
-                    Picker("生の位置データ", selection: $rawEvidenceRetentionDays) {
+                    Picker("生の位置データ", selection: $selectedRawEvidenceRetentionDays) {
                         Text("30日").tag(30)
                         Text("90日").tag(90)
                         Text("1年").tag(365)
                         Text("ずっと").tag(0)
                     }
-                    .onChange(of: rawEvidenceRetentionDays) { _, days in
-                        recorder.applyRetentionPolicy(days: days)
+                    .onChange(of: selectedRawEvidenceRetentionDays) { oldValue, days in
+                        updateRawEvidenceRetention(from: oldValue, to: days)
                     }
                 } header: {
                     Text("プライバシー")
@@ -190,6 +216,22 @@ struct SettingsView: View {
             } message: {
                 Text(privacyActionErrorMessage ?? "")
             }
+            .alert(
+                "古い生の位置データを削除しますか？",
+                isPresented: Binding(
+                    get: { pendingRawEvidenceRetentionDays != nil },
+                    set: { if !$0 { cancelPendingRetentionChange() } }
+                )
+            ) {
+                Button("削除して変更", role: .destructive) {
+                    guard let days = pendingRawEvidenceRetentionDays else { return }
+                    pendingRawEvidenceRetentionDays = nil
+                    applyRawEvidenceRetention(days)
+                }
+                Button("キャンセル", role: .cancel, action: cancelPendingRetentionChange)
+            } message: {
+                Text("保持期間を短くすると、期間より古い生の位置データは元に戻せません。日記と確定したTimelineは残ります。")
+            }
         }
     }
 
@@ -232,6 +274,33 @@ struct SettingsView: View {
         }
     }
 
+    private func updateRawEvidenceRetention(from oldValue: Int, to days: Int) {
+        guard days != rawEvidenceRetentionDays else { return }
+        let isShortening = days > 0 && (rawEvidenceRetentionDays == 0 || days < rawEvidenceRetentionDays)
+        if isShortening {
+            pendingRawEvidenceRetentionDays = days
+            selectedRawEvidenceRetentionDays = oldValue
+        } else {
+            applyRawEvidenceRetention(days)
+        }
+    }
+
+    private func applyRawEvidenceRetention(_ days: Int) {
+        do {
+            try recorder.applyRetentionPolicy(days: days)
+            rawEvidenceRetentionDays = days
+            selectedRawEvidenceRetentionDays = days
+        } catch {
+            selectedRawEvidenceRetentionDays = rawEvidenceRetentionDays
+            privacyActionErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func cancelPendingRetentionChange() {
+        pendingRawEvidenceRetentionDays = nil
+        selectedRawEvidenceRetentionDays = rawEvidenceRetentionDays
+    }
+
     private func restoreAllSuppressed() {
         do {
             try TimelineEditingService().restoreAllSuppressed(in: modelContext)
@@ -247,7 +316,7 @@ private struct TrackingDiagnosticsSection: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(LocationRecorder.self) private var recorder
 
-    @AppStorage("detailedRoutesEnabled") private var detailedRoutesEnabled = false
+    @AppStorage(TrackingSensitivity.storageKey) private var trackingSensitivityRaw = TrackingSensitivity.current.rawValue
 
     var body: some View {
         Section {
@@ -265,14 +334,22 @@ private struct TrackingDiagnosticsSection: View {
                 }
             }
 
-            Toggle("詳細な移動経路を記録", isOn: $detailedRoutesEnabled)
-                .onChange(of: detailedRoutesEnabled) { _, enabled in
-                    recorder.setDetailedRoutesEnabled(enabled)
+            Picker("記録の強さ", selection: $trackingSensitivityRaw) {
+                ForEach(TrackingSensitivity.allCases) { sensitivity in
+                    Text(sensitivity.title).tag(sensitivity.rawValue)
                 }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: trackingSensitivityRaw) { _, rawValue in
+                guard let sensitivity = TrackingSensitivity(rawValue: rawValue) else { return }
+                recorder.setTrackingSensitivity(sensitivity)
+            }
+
+            TrackingSensitivitySummary(sensitivity: selectedSensitivity)
         } header: {
             Text("自動記録")
         } footer: {
-            Text("「最後の位置」はDayTraceが最後に受け取った位置・訪問の時刻です。長時間更新がない場合でも、推測で履歴を埋めません。詳細な経路は位置更新を増やすため、バッテリー消費が増える場合があります。")
+            Text("「最後の位置」はDayTraceが最後に受け取った位置・訪問の時刻です。標準以上では位置更新を増やし、iOSの訪問検出が落とした短時間停止を低信頼度の候補として補います。")
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, canRequestSnapshot else { return }
@@ -283,6 +360,10 @@ private struct TrackingDiagnosticsSection: View {
     private var canRequestSnapshot: Bool {
         recorder.authorizationStatus == .authorizedAlways
             || recorder.authorizationStatus == .authorizedWhenInUse
+    }
+
+    private var selectedSensitivity: TrackingSensitivity {
+        TrackingSensitivity(rawValue: trackingSensitivityRaw) ?? TrackingSensitivity.current
     }
 
     @ViewBuilder
@@ -373,5 +454,42 @@ private struct TrackingDiagnosticsSection: View {
         return date.formatted(
             .dateTime.month().day().hour().minute().locale(Locale(identifier: "ja_JP"))
         )
+    }
+}
+
+private struct TrackingSensitivitySummary: View {
+    let sensitivity: TrackingSensitivity
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(sensitivity.shortDescription, systemImage: iconName)
+                .font(.subheadline)
+                .bold()
+
+            VStack(alignment: .leading, spacing: 4) {
+                LabeledContent("短時間停止", value: stopDetectionLabel)
+                LabeledContent("電池負荷", value: sensitivity.batteryDescription)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var iconName: String {
+        switch sensitivity {
+        case .lowPower: "leaf"
+        case .balanced: "car.side"
+        case .highPrecision: "scope"
+        }
+    }
+
+    private var stopDetectionLabel: String {
+        guard let minimumDuration = sensitivity.inferredStopMinimumDuration else {
+            return "iOS任せ"
+        }
+        let minutes = Int(minimumDuration / 60)
+        return "\(minutes)分以上を補助"
     }
 }

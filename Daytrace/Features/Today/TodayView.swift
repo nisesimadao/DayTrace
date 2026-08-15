@@ -1,19 +1,37 @@
 import CoreLocation
-import MapKit
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct TodayView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.openURL) private var openURL
     @Environment(LocationRecorder.self) private var recorder
     @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
+    @Query private var places: [PlaceRecord]
 
     @State private var selectedEpisodeID: UUID?
-    @State private var isSettingsPresented = false
+    @State private var isSettingsPresented: Bool
+    @State private var isMapExpanded = false
     @State private var stayEditSelection: StayEditSelection?
     @State private var undoSuppressedEpisodeID: UUID?
+    @State private var isTimelineErrorPresented = false
+    @State private var timelineErrorMessage = ""
+    @State private var locationSnapshot = TodayLocationSnapshot.empty
+    @State private var lastLocationSnapshotRefresh: Date?
+
+    init() {
+#if DEBUG
+        _isSettingsPresented = State(
+            initialValue: ProcessInfo.processInfo.environment["DAYTRACE_SHOW_SETTINGS"] == "1"
+        )
+#else
+        _isSettingsPresented = State(initialValue: false)
+#endif
+    }
 
     private var day: DayInterval {
         DayInterval(containing: .now, timeZone: .current)
@@ -30,10 +48,101 @@ struct TodayView: View {
         }
     }
 
-    private var hasLocatableStay: Bool {
+    private var todayRouteLocations: [LocationEvidence] { locationSnapshot.routeLocations }
+
+    private var todayPreviewRouteLocations: [LocationEvidence] {
+        let stays = todayEpisodes
+            .filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
+            .sorted { $0.startDate < $1.startDate }
+
+        guard !stays.isEmpty else {
+            return []
+        }
+
+        let routeEnd = provisionalCurrentLocation?.lastEvidenceAt ?? stays.last?.startDate ?? day.end
+        return todayRouteLocations.filter { $0.timestamp < routeEnd }
+    }
+
+    private var currentLocation: CurrentLocationContext? {
+        locationSnapshot.currentLocation
+    }
+
+    private var provisionalCurrentLocation: CurrentLocationContext? {
+        guard let currentLocation else { return nil }
+        let alreadyRepresented = todayEpisodes.contains {
+            CurrentLocationProjection.matches($0, currentLocation: currentLocation)
+        }
+        return alreadyRepresented ? nil : currentLocation
+    }
+
+    private var mapCurrentLocation: CurrentLocationContext? {
+        guard let currentLocation = provisionalCurrentLocation else { return nil }
+        let bucketInterval: TimeInterval = 60
+        let bucketEnd = Date(
+            timeIntervalSinceReferenceDate: floor(currentLocation.lastEvidenceAt.timeIntervalSinceReferenceDate / bucketInterval) * bucketInterval
+        )
+        let evidence = todayRouteLocations.last { location in
+            location.timestamp <= bucketEnd
+                && location.timestamp >= currentLocation.startDate
+                && location.horizontalAccuracy >= 0
+                && location.horizontalAccuracy <= 1_000
+        }
+
+        guard let evidence else { return currentLocation }
+        return CurrentLocationContext(
+            startDate: currentLocation.startDate,
+            lastEvidenceAt: evidence.timestamp,
+            latitude: evidence.latitude,
+            longitude: evidence.longitude,
+            horizontalAccuracy: evidence.horizontalAccuracy,
+            timeZoneIdentifier: evidence.timeZoneIdentifier
+        )
+    }
+
+    private var currentLocationName: String {
+        guard let currentLocation = provisionalCurrentLocation else { return "現在地" }
+        return CurrentLocationProjection.placeName(for: currentLocation, places: places) ?? "現在地"
+    }
+
+    private var currentLocationTransition: CurrentLocationTransitionContext? {
+        guard let currentLocation = provisionalCurrentLocation,
+              let lastStay = todayEpisodes
+                .filter({ $0.kind == .stay && $0.latitude != nil && $0.longitude != nil })
+                .sorted(by: { $0.startDate < $1.startDate })
+                .last else {
+            return nil
+        }
+
+        let routeStart = lastStay.endDate ?? lastStay.startDate
+        guard currentLocation.lastEvidenceAt.timeIntervalSince(routeStart) >= 60 else { return nil }
+        let movementSamples = todayRouteLocations
+            .filter {
+                $0.timestamp > routeStart
+                    && $0.timestamp <= currentLocation.lastEvidenceAt
+                    && $0.horizontalAccuracy >= 0
+                    && $0.horizontalAccuracy <= 1_000
+                    && ($0.source == .standardLocation || $0.source == .significantChange)
+            }
+            .sorted { $0.timestamp < $1.timestamp }
+
+        return CurrentLocationTransitionContext(
+            kind: movementSamples.isEmpty ? .gap : .move,
+            startDate: routeStart,
+            endDate: currentLocation.lastEvidenceAt,
+            timeZoneIdentifier: currentLocation.timeZoneIdentifier
+        )
+    }
+
+    private var hasMapContent: Bool {
         todayEpisodes.contains { episode in
             episode.kind == .stay && episode.latitude != nil && episode.longitude != nil
-        }
+        } || provisionalCurrentLocation != nil
+    }
+
+    private var currentMapSequenceNumber: Int {
+        todayEpisodes.count {
+            $0.kind == .stay && $0.latitude != nil && $0.longitude != nil
+        } + 1
     }
 
     private var todayJournal: JournalEntry? {
@@ -43,60 +152,111 @@ struct TodayView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: DS.sectionSpacing) {
-                TodayHeader(episodes: todayEpisodes)
-
-                if recorder.health != .healthy {
-                    TrackingHealthBanner(health: recorder.health)
-                }
-
-                if hasLocatableStay {
-                    DayMap(
-                        episodes: todayEpisodes,
-                        selectedEpisodeID: $selectedEpisodeID
-                    )
-                }
-
-                if todayEpisodes.isEmpty {
-                    EmptyTimelineState()
-                } else {
-                    DayTimeline(
-                        episodes: todayEpisodes,
-                        selectedEpisodeID: $selectedEpisodeID,
-                        lastEvidenceAt: recorder.lastEvidenceAt,
-                        onEdit: { episode in
-                            stayEditSelection = StayEditSelection(episode: episode)
-                        },
-                        onSuppress: suppress
-                    )
-                }
+                TodayHeader(
+                    episodes: todayEpisodes,
+                    openSettings: { isSettingsPresented = true }
+                )
 
                 JournalComposer(day: day, existingJournal: todayJournal)
+
+                LocationContextHeader()
+
+                if recorder.health != .healthy {
+                    TrackingHealthBanner(
+                        health: recorder.health,
+                        action: trackingHealthAction
+                    )
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                if hasMapContent {
+                    DayMap(
+                        episodes: todayEpisodes,
+                        routeLocations: todayPreviewRouteLocations,
+                        currentLocation: mapCurrentLocation,
+                        selectedEpisodeID: $selectedEpisodeID,
+                        onExpand: showExpandedMap
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                }
+
+                if todayEpisodes.isEmpty && provisionalCurrentLocation == nil {
+                    EmptyTimelineState()
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if !todayEpisodes.isEmpty {
+                            DayTimeline(
+                                episodes: todayEpisodes,
+                                selectedEpisodeID: $selectedEpisodeID,
+                                lastEvidenceAt: nil,
+                                currentLocation: currentLocation,
+                                connectsToCurrentLocation: currentLocationTransition != nil || provisionalCurrentLocation != nil,
+                                onEdit: { episode in
+                                    stayEditSelection = StayEditSelection(episode: episode)
+                                },
+                                onSuppress: suppress
+                            )
+                        }
+
+                        if let currentLocationTransition {
+                            CurrentLocationTransitionRow(transition: currentLocationTransition)
+                                .transition(.opacity)
+                        }
+
+                        if let provisionalCurrentLocation {
+                            CurrentLocationTimelineRow(
+                                currentLocation: provisionalCurrentLocation,
+                                placeName: currentLocationName,
+                                mapSequenceNumber: currentMapSequenceNumber,
+                                connectsFromPrevious: currentLocationTransition != nil || !todayEpisodes.isEmpty,
+                                onRegisterStay: registerCurrentLocationAsStay
+                            )
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
+                    }
+                }
             }
             .padding(.horizontal, DS.horizontalPadding)
             .padding(.bottom, 40)
         }
-        .background(Color(.systemBackground))
-        .navigationTitle("今日")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isSettingsPresented = true
-                } label: {
-                    Image(systemName: "ellipsis")
-                }
-                .accessibilityLabel("設定")
-            }
-        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: recorder.health == .healthy)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: hasMapContent)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: provisionalCurrentLocation != nil)
+        .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isSettingsPresented) {
             SettingsView()
         }
         .sheet(item: $stayEditSelection) { selection in
             StayEditorSheet(episode: selection.episode)
         }
+        .fullScreenCover(isPresented: $isMapExpanded) {
+            ExpandedDayMapView(
+                title: "今日の足あと",
+                episodes: todayEpisodes,
+                routeLocations: todayPreviewRouteLocations,
+                currentLocation: mapCurrentLocation,
+                selectedEpisodeID: $selectedEpisodeID,
+                onRegisterCurrentLocation: registerCurrentLocationAsStay
+            )
+        }
+        .navigationDestination(for: CalendarDay.self) { day in
+            HistoricalDayDetailView(day: day)
+        }
+        .alert("タイムラインを更新できません", isPresented: $isTimelineErrorPresented) { } message: {
+            Text(timelineErrorMessage)
+        }
         .task {
             recorder.requestForegroundSnapshot()
+            refreshLocationSnapshot(force: true)
             try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
+            await AutomaticPlaceSuggestionService.annotateUnresolvedRecentStays(in: modelContext)
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(TodayLocationSnapshot.refreshInterval))
+                refreshLocationSnapshot(force: false)
+            }
         }
         .safeAreaInset(edge: .bottom) {
             if let episodeID = undoSuppressedEpisodeID {
@@ -111,35 +271,209 @@ struct TodayView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 11)
-                .background(.regularMaterial, in: Capsule())
+                .daytraceGlassSurface(cornerRadius: DS.contentCornerRadius)
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 6)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: undoSuppressedEpisodeID)
     }
 
     private func suppress(_ episode: TimelineEpisode) {
         guard episode.kind == .stay else { return }
-        try? TimelineEditingService().setSuppressed(
-            episodeID: episode.id,
-            suppressed: true,
-            in: modelContext
-        )
-        try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
-        if selectedEpisodeID == episode.id {
-            selectedEpisodeID = nil
+        do {
+            try TimelineEditingService().setSuppressed(
+                episodeID: episode.id,
+                suppressed: true,
+                in: modelContext
+            )
+            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
+            if selectedEpisodeID == episode.id {
+                selectedEpisodeID = nil
+            }
+            undoSuppressedEpisodeID = episode.id
+        } catch {
+            timelineErrorMessage = error.localizedDescription
+            isTimelineErrorPresented = true
         }
-        undoSuppressedEpisodeID = episode.id
+    }
+
+    private func showExpandedMap() {
+        isMapExpanded = true
+    }
+
+    private func registerCurrentLocationAsStay() {
+        guard let currentLocation = provisionalCurrentLocation else { return }
+
+        let title = currentLocationName == "現在地" ? "未設定の場所" : currentLocationName
+        let episode = TimelineEpisode(
+            kind: .stay,
+            startDate: currentLocation.startDate,
+            endDate: nil,
+            title: title,
+            subtitle: "手動で追加",
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude,
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: currentLocation.timeZoneIdentifier
+        )
+
+        do {
+            modelContext.insert(episode)
+            modelContext.insert(UserAssertion(
+                episodeID: episode.id,
+                type: .reposition,
+                replacementLatitude: currentLocation.latitude,
+                replacementLongitude: currentLocation.longitude
+            ))
+            if title != "未設定の場所" {
+                modelContext.insert(UserAssertion(
+                    episodeID: episode.id,
+                    type: .rename,
+                    replacementTitle: title
+                ))
+            }
+            try modelContext.save()
+            selectedEpisodeID = episode.id
+            isMapExpanded = false
+            DispatchQueue.main.async {
+                stayEditSelection = StayEditSelection(episode: episode)
+            }
+        } catch {
+            timelineErrorMessage = error.localizedDescription
+            isTimelineErrorPresented = true
+        }
+    }
+
+    private var trackingHealthAction: TrackingHealthBanner.Action? {
+        switch recorder.health {
+        case .needsPermission:
+            switch recorder.authorizationStatus {
+            case .notDetermined:
+                return .init(title: "位置情報を許可", systemImage: "location") {
+                    recorder.requestWhenInUse()
+                }
+            case .authorizedWhenInUse:
+                if recorder.canRequestAlwaysInApp {
+                    return .init(title: "常に許可へ進む", systemImage: "location.fill") {
+                        recorder.requestAlways()
+                    }
+                }
+                return settingsAction(title: "設定で常に許可", systemImage: "gearshape")
+            case .denied:
+                return systemSettingsAction(title: "位置情報をオン", systemImage: "gearshape")
+            default:
+                return settingsAction(title: "記録状態を見る", systemImage: "gearshape")
+            }
+        case .limitedAccuracy:
+            return systemSettingsAction(title: "正確な位置情報をオン", systemImage: "scope")
+        case .stale:
+            return .init(title: "記録を再確認", systemImage: "arrow.clockwise") {
+                recorder.requestForegroundSnapshot()
+            }
+        case .unavailable:
+            return systemSettingsAction(title: "設定を開く", systemImage: "gearshape")
+        case .notConfigured:
+            return settingsAction(title: "記録状態を見る", systemImage: "gearshape")
+        case .healthy:
+            return nil
+        }
+    }
+
+    private func settingsAction(title: String, systemImage: String) -> TrackingHealthBanner.Action {
+        .init(title: title, systemImage: systemImage) {
+            isSettingsPresented = true
+        }
+    }
+
+    private func systemSettingsAction(title: String, systemImage: String) -> TrackingHealthBanner.Action {
+        .init(title: title, systemImage: systemImage) {
+            guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+            openURL(url)
+        }
     }
 
     private func restoreSuppressed(_ episodeID: UUID) {
-        try? TimelineEditingService().setSuppressed(
-            episodeID: episodeID,
-            suppressed: false,
-            in: modelContext
+        do {
+            try TimelineEditingService().setSuppressed(
+                episodeID: episodeID,
+                suppressed: false,
+                in: modelContext
+            )
+            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
+            undoSuppressedEpisodeID = nil
+        } catch {
+            timelineErrorMessage = error.localizedDescription
+            isTimelineErrorPresented = true
+        }
+    }
+
+    private func refreshLocationSnapshot(force: Bool) {
+        let now = Date.now
+        if !force,
+           let lastLocationSnapshotRefresh,
+           now.timeIntervalSince(lastLocationSnapshotRefresh) < TodayLocationSnapshot.refreshInterval {
+            return
+        }
+
+        let dayStart = day.start
+        let dayEnd = day.end
+        let descriptor = FetchDescriptor<LocationEvidence>(
+            predicate: #Predicate<LocationEvidence> { evidence in
+                evidence.timestamp >= dayStart && evidence.timestamp < dayEnd
+            },
+            sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
         )
-        try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
-        undoSuppressedEpisodeID = nil
+
+        let evidence = (try? modelContext.fetch(descriptor)) ?? []
+        locationSnapshot = TodayLocationSnapshot(
+            routeLocations: TodayLocationSnapshot.thinnedRouteLocations(from: evidence),
+            currentLocation: CurrentLocationProjection.project(
+                evidence: evidence,
+                dayStart: dayStart
+            )
+        )
+        lastLocationSnapshotRefresh = now
+    }
+}
+
+@MainActor
+private struct TodayLocationSnapshot {
+    static let empty = TodayLocationSnapshot(routeLocations: [], currentLocation: nil)
+    static let refreshInterval: TimeInterval = 45
+    private static let minimumRouteInterval: TimeInterval = 10
+    private static let minimumRouteDistance: CLLocationDistance = 80
+    private static let maximumUsableAccuracy: CLLocationAccuracy = 1_000
+
+    let routeLocations: [LocationEvidence]
+    let currentLocation: CurrentLocationContext?
+
+    static func thinnedRouteLocations(from evidence: [LocationEvidence]) -> [LocationEvidence] {
+        let usableEvidence = evidence.filter {
+            $0.horizontalAccuracy >= 0
+                && $0.horizontalAccuracy <= maximumUsableAccuracy
+                && ($0.source == .standardLocation || $0.source == .significantChange)
+        }
+        guard let first = usableEvidence.first else { return [] }
+
+        var thinned = [first]
+        var lastAccepted = first
+
+        for sample in usableEvidence.dropFirst() {
+            let elapsed = sample.timestamp.timeIntervalSince(lastAccepted.timestamp)
+            let distance = CLLocation(latitude: sample.latitude, longitude: sample.longitude).distance(
+                from: CLLocation(latitude: lastAccepted.latitude, longitude: lastAccepted.longitude)
+            )
+            guard elapsed >= minimumRouteInterval && distance >= minimumRouteDistance else {
+                continue
+            }
+            thinned.append(sample)
+            lastAccepted = sample
+        }
+
+        return thinned
     }
 }
 
@@ -150,25 +484,64 @@ private struct StayEditSelection: Identifiable {
 
 private struct TodayHeader: View {
     let episodes: [TimelineEpisode]
+    let openSettings: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(Date.now.formatted(.dateTime.weekday(.wide).locale(Locale(identifier: "ja_JP"))))
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                DaytraceWordmark(markSize: 29)
 
-            Text(Date.now.formatted(.dateTime.month(.wide).day().locale(Locale(identifier: "ja_JP"))))
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-                .tracking(-0.7)
+                Spacer()
 
-            if !episodes.isEmpty {
-                let stays = episodes.filter { $0.kind == .stay }.count
-                Text("\(stays)か所 · 今日の記録")
-                    .font(.subheadline)
+                Button("設定", systemImage: "gearshape", action: openSettings)
+                    .font(.subheadline.weight(.semibold))
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .buttonStyle(.daytraceGlass)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(Date.now.formatted(.dateTime.weekday(.wide).locale(Locale(identifier: "ja_JP"))))
+                    .font(.callout)
                     .foregroundStyle(.secondary)
+
+                Text(Date.now.formatted(.dateTime.month(.wide).day().locale(Locale(identifier: "ja_JP"))))
+                    .font(.largeTitle.bold())
+                    .fontDesign(.rounded)
+                    .foregroundStyle(.primary)
+
+                if !episodes.isEmpty {
+                    let stays = episodes.count { $0.kind == .stay }
+                    Label("\(stays)か所が、今日の手がかりになっています", systemImage: "sparkle")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("まだ何も起きていない日も、ちゃんと一日です。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
-        .padding(.top, 12)
+        .padding(DS.cardPadding)
+        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.contentCornerRadius)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        }
+        .padding(.top, 8)
+    }
+}
+
+private struct LocationContextHeader: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("今日の手がかり")
+                .font(.title2.bold())
+
+            Text("場所と移動は、思い出すための背景です。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -189,32 +562,53 @@ private struct EmptyTimelineState: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 8)
+        .padding(DS.cardPadding)
+        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
         .accessibilityElement(children: .combine)
     }
 }
 
 private struct TrackingHealthBanner: View {
+    struct Action {
+        let title: String
+        let systemImage: String
+        let handler: () -> Void
+    }
+
     let health: LocationRecorder.Health
+    let action: Action?
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol)
-                .font(.title3)
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(detail)
-                    .font(.caption)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .font(.title3)
                     .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
             }
 
-            Spacer()
+            if let action {
+                Button {
+                    action.handler()
+                } label: {
+                    Label(action.title, systemImage: action.systemImage)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.daytraceGlassProminent)
+            }
         }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
+        .padding(DS.cardPadding)
+        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
+        .accessibilityElement(children: .contain)
     }
 
     private var symbol: String {
@@ -239,10 +633,10 @@ private struct TrackingHealthBanner: View {
 
     private var detail: String {
         switch health {
-        case .limitedAccuracy: "大まかな訪問履歴として記録します"
+        case .limitedAccuracy: "正確な位置情報をオンにすると、滞在場所を修正しやすくなります"
         case .stale: "最後に確認できた時刻以降は、推測せず空白として扱います"
         case .unavailable(let reason): reason
-        case .needsPermission: "日記はそのまま使えます"
+        case .needsPermission: "位置情報を許可すると、今日のタイムラインに現在地が出ます"
         default: "位置情報の状態を確認しています"
         }
     }
@@ -256,16 +650,18 @@ struct StayEditorSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \TimelineEpisode.startDate) private var allEpisodes: [TimelineEpisode]
     @Query(sort: \UserAssertion.createdAt) private var allAssertions: [UserAssertion]
+    @Query(sort: \PlaceRecord.name) private var allPlaces: [PlaceRecord]
 
     @State private var title: String
     @State private var startDate: Date
     @State private var endDate: Date
     @State private var isOngoing: Bool
     @State private var shouldConfirmLocation = false
+    @State private var isLocationEditorPresented = false
     @State private var saveErrorMessage: String?
-    @State private var isLookingUpPlace = false
-    @State private var placeLookupMessage: String?
-    @State private var didApplyPlaceSuggestion = false
+    @State private var selectedLatitude: Double
+    @State private var selectedLongitude: Double
+    @State private var selectedMergePlaceID: UUID?
 
     init(episode: TimelineEpisode, rebuildHistoricalTransitions: Bool = false) {
         self.episode = episode
@@ -274,6 +670,8 @@ struct StayEditorSheet: View {
         _startDate = State(initialValue: episode.startDate)
         _endDate = State(initialValue: episode.endDate ?? .now)
         _isOngoing = State(initialValue: episode.endDate == nil)
+        _selectedLatitude = State(initialValue: episode.latitude ?? 0)
+        _selectedLongitude = State(initialValue: episode.longitude ?? 0)
     }
 
     private var originalDisplayTitle: String {
@@ -288,10 +686,20 @@ struct StayEditorSheet: View {
         trimmedTitle != originalDisplayTitle
     }
 
+    private var hasEditableCoordinate: Bool {
+        episode.latitude != nil && episode.longitude != nil
+    }
+
+    private var hasEditedCoordinate: Bool {
+        guard let latitude = episode.latitude, let longitude = episode.longitude else { return false }
+        return abs(selectedLatitude - latitude) >= 0.000_001
+            || abs(selectedLongitude - longitude) >= 0.000_001
+    }
+
     private var shouldApplyConfirmation: Bool {
         shouldConfirmLocation
             && !trimmedTitle.isEmpty
-            && (episode.confidence != .high || hasEditedPlaceName)
+            && (episode.confidence != .high || hasEditedPlaceName || hasEditedCoordinate)
     }
 
     private var proposedEndDate: Date? {
@@ -300,6 +708,23 @@ struct StayEditorSheet: View {
 
     private var hasEditedTime: Bool {
         startDate != episode.startDate || proposedEndDate != episode.endDate
+    }
+
+    private var mergeCandidates: [PlaceRecord] {
+        let candidates = allPlaces.filter { $0.id != episode.placeID }
+        guard let latitude = episode.latitude, let longitude = episode.longitude else {
+            return Array(candidates.prefix(12))
+        }
+
+        let episodeLocation = CLLocation(latitude: latitude, longitude: longitude)
+        return candidates
+            .sorted { lhs, rhs in
+                let leftDistance = episodeLocation.distance(from: CLLocation(latitude: lhs.latitude, longitude: lhs.longitude))
+                let rightDistance = episodeLocation.distance(from: CLLocation(latitude: rhs.latitude, longitude: rhs.longitude))
+                return leftDistance < rightDistance
+            }
+            .prefix(12)
+            .map { $0 }
     }
 
     private var intervalValidationError: TimelineEditingError? {
@@ -313,10 +738,6 @@ struct StayEditorSheet: View {
         )
     }
 
-    private var canLookUpPlace: Bool {
-        episode.latitude != nil && episode.longitude != nil && !isLookingUpPlace
-    }
-
     var body: some View {
         NavigationStack {
             Form {
@@ -324,34 +745,42 @@ struct StayEditorSheet: View {
                     TextField("場所の名前", text: $title)
                         .textInputAutocapitalization(.never)
 
-                    Button(action: lookUpPlaceSuggestion) {
-                        if isLookingUpPlace {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                Text("Apple Mapsで候補を検索中")
-                            }
-                        } else {
-                            Label("Apple Mapsで候補を探す", systemImage: "map")
-                        }
-                    }
-                    .disabled(!canLookUpPlace)
-
-                    if didApplyPlaceSuggestion {
-                        Text("Apple Mapsの候補です。内容を確認し、「この場所で合っている」をオンにすると次回から覚えます。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if let placeLookupMessage {
-                        Text(placeLookupMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    if let originalLatitude = episode.latitude,
+                       let originalLongitude = episode.longitude {
+                        StayLocationPicker(
+                            latitude: selectedLatitude,
+                            longitude: selectedLongitude,
+                            originalLatitude: originalLatitude,
+                            originalLongitude: originalLongitude,
+                            onEdit: showLocationEditor
+                        )
                     }
 
-                    if episode.confidence == .high && !hasEditedPlaceName {
+                    if episode.confidence == .high && !hasEditedPlaceName && !hasEditedCoordinate {
                         Label("この場所は高い確度で記録されています", systemImage: "checkmark.circle")
                             .foregroundStyle(.secondary)
                     } else {
-                        Toggle("この場所で合っている", isOn: $shouldConfirmLocation)
+                        Toggle("この場所として覚える", isOn: $shouldConfirmLocation)
                             .disabled(trimmedTitle.isEmpty)
+                    }
+                }
+
+                if !mergeCandidates.isEmpty {
+                    Section {
+                        Picker("結合先", selection: $selectedMergePlaceID) {
+                            Text("結合しない").tag(UUID?.none)
+                            ForEach(mergeCandidates) { place in
+                                Text(mergeCandidateTitle(for: place))
+                                    .tag(Optional(place.id))
+                            }
+                        }
+                        .onChange(of: selectedMergePlaceID) { _, placeID in
+                            applyMergeSelection(placeID)
+                        }
+                    } header: {
+                        Text("同じ場所として結合")
+                    } footer: {
+                        Text("同じ場所なのに別名・別地点として出ている場合は、既存の場所へまとめます。再解析後もこの紐付けを優先します。")
                     }
                 }
 
@@ -373,19 +802,35 @@ struct StayEditorSheet: View {
                     }
                 }
             }
+            .navigationDestination(isPresented: $isLocationEditorPresented) {
+                if let originalLatitude = episode.latitude,
+                   let originalLongitude = episode.longitude {
+                    StayLocationEditor(
+                        latitude: selectedLatitude,
+                        longitude: selectedLongitude,
+                        originalLatitude: originalLatitude,
+                        originalLongitude: originalLongitude,
+                        onConfirm: applyLocationSelection
+                    )
+                }
+            }
             .navigationTitle("滞在を修正")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("キャンセル") { dismiss() }
+                    if !isLocationEditorPresented {
+                        Button("キャンセル") { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存", action: save)
-                        .disabled(intervalValidationError != nil || isLookingUpPlace)
+                    if !isLocationEditorPresented {
+                        Button("保存", action: save)
+                            .disabled(intervalValidationError != nil)
+                    }
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .alert(
             "保存できません",
             isPresented: Binding(
@@ -399,29 +844,24 @@ struct StayEditorSheet: View {
         }
     }
 
-    private func lookUpPlaceSuggestion() {
-        guard let latitude = episode.latitude, let longitude = episode.longitude else { return }
-        isLookingUpPlace = true
-        placeLookupMessage = nil
-        didApplyPlaceSuggestion = false
+    private func showLocationEditor() {
+        isLocationEditorPresented = true
+    }
 
-        Task {
-            do {
-                if let suggestion = try await PlaceSuggestionLookup.suggestion(
-                    latitude: latitude,
-                    longitude: longitude
-                ) {
-                    title = suggestion
-                    shouldConfirmLocation = false
-                    didApplyPlaceSuggestion = true
-                } else {
-                    placeLookupMessage = "この位置では場所の候補を見つけられませんでした。"
-                }
-            } catch {
-                placeLookupMessage = "場所の候補を取得できませんでした。通信状態を確認してもう一度試してください。"
-            }
-            isLookingUpPlace = false
+    private func applyLocationSelection(
+        latitude: Double,
+        longitude: Double,
+        suggestedTitle: String?
+    ) {
+        let hadCustomTitle = hasEditedPlaceName
+        selectedLatitude = latitude
+        selectedLongitude = longitude
+        if let suggestedTitle {
+            title = suggestedTitle
+        } else if !hadCustomTitle {
+            title = ""
         }
+        shouldConfirmLocation = false
     }
 
     private func save() {
@@ -435,107 +875,60 @@ struct StayEditorSheet: View {
                 title: title,
                 startDate: startDate,
                 endDate: proposedEndDate,
+                latitude: hasEditableCoordinate ? selectedLatitude : nil,
+                longitude: hasEditableCoordinate ? selectedLongitude : nil,
                 confirmLocation: shouldApplyConfirmation,
+                mergePlaceID: selectedMergePlaceID,
                 in: modelContext
             )
+            if rebuildHistoricalTransitions {
+                if timeWasEdited {
+                    var boundaryDates = [originalStart, startDate]
+                    if let originalEnd { boundaryDates.append(originalEnd) }
+                    if let proposedEndDate { boundaryDates.append(proposedEndDate) }
+
+                    if let first = boundaryDates.min(), let last = boundaryDates.max() {
+                        let rebuildInterval = DateInterval(
+                            start: first.addingTimeInterval(-1),
+                            end: last.addingTimeInterval(1)
+                        )
+                        try TimelineEngine().rebuildTransitions(
+                            covering: rebuildInterval,
+                            in: modelContext
+                        )
+                    }
+                }
+            } else {
+                try TimelineEngine().rebuildRecentTimeline(in: modelContext)
+            }
+            dismiss()
         } catch {
             saveErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func mergeCandidateTitle(for place: PlaceRecord) -> String {
+        guard let latitude = episode.latitude, let longitude = episode.longitude else {
+            return place.name
+        }
+        let distance = CLLocation(latitude: latitude, longitude: longitude).distance(
+            from: CLLocation(latitude: place.latitude, longitude: place.longitude)
+        )
+        if distance < 1_000 {
+            return "\(place.name)（約\(Int(distance))m）"
+        }
+        let kilometers = distance / 1_000
+        return "\(place.name)（約\(String(format: "%.1f", kilometers))km）"
+    }
+
+    private func applyMergeSelection(_ placeID: UUID?) {
+        guard let placeID,
+              let place = allPlaces.first(where: { $0.id == placeID }) else {
             return
         }
-
-        if rebuildHistoricalTransitions {
-            if timeWasEdited {
-                var boundaryDates = [originalStart, startDate]
-                if let originalEnd { boundaryDates.append(originalEnd) }
-                if let proposedEndDate { boundaryDates.append(proposedEndDate) }
-
-                if let first = boundaryDates.min(), let last = boundaryDates.max() {
-                    let rebuildInterval = DateInterval(
-                        start: first.addingTimeInterval(-1),
-                        end: last.addingTimeInterval(1)
-                    )
-                    try? TimelineEngine().rebuildTransitions(
-                        covering: rebuildInterval,
-                        in: modelContext
-                    )
-                }
-            }
-        } else {
-            try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
-        }
-        dismiss()
-    }
-}
-
-@MainActor
-private enum PlaceSuggestionLookup {
-    static func suggestion(latitude: Double, longitude: Double) async throws -> String? {
-        let location = CLLocation(latitude: latitude, longitude: longitude)
-
-        if #available(iOS 26.0, *) {
-            return try await mapKitSuggestion(for: location)
-        } else {
-            return try await legacySuggestion(for: location)
-        }
-    }
-
-    @available(iOS 26.0, *)
-    private static func mapKitSuggestion(for location: CLLocation) async throws -> String? {
-        guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
-        request.preferredLocale = .current
-
-        return try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<String?, Error>) in
-            request.getMapItems { [request] items, error in
-                _ = request
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                let suggestion = items?
-                    .lazy
-                    .compactMap(preferredLabel(for:))
-                    .first
-                continuation.resume(returning: suggestion)
-            }
-        }
-    }
-
-    @available(iOS, introduced: 18.0, obsoleted: 26.0)
-    private static func legacySuggestion(for location: CLLocation) async throws -> String? {
-        let placemarks = try await CLGeocoder().reverseGeocodeLocation(
-            location,
-            preferredLocale: .current
-        )
-
-        for placemark in placemarks {
-            let candidates = [
-                placemark.areasOfInterest?.first,
-                placemark.name,
-                placemark.locality,
-            ]
-            if let value = candidates.compactMap(cleaned).first {
-                return value
-            }
-        }
-        return nil
-    }
-
-    @available(iOS 26.0, *)
-    private static func preferredLabel(for item: MKMapItem) -> String? {
-        let candidates = [
-            item.name,
-            item.address?.shortAddress,
-            item.addressRepresentations?.fullAddress(includingRegion: false, singleLine: true),
-            item.address?.fullAddress,
-        ]
-        return candidates.compactMap(cleaned).first
-    }
-
-    private static func cleaned(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        title = place.name
+        selectedLatitude = place.latitude
+        selectedLongitude = place.longitude
+        shouldConfirmLocation = true
     }
 }

@@ -1,9 +1,13 @@
 import SwiftUI
 
 struct DayTimeline: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let episodes: [TimelineEpisode]
     @Binding var selectedEpisodeID: UUID?
     let lastEvidenceAt: Date?
+    let currentLocation: CurrentLocationContext?
+    let connectsToCurrentLocation: Bool
     let allowsEditing: Bool
     let allowsSuppression: Bool
     let onEdit: (TimelineEpisode) -> Void
@@ -13,6 +17,8 @@ struct DayTimeline: View {
         episodes: [TimelineEpisode],
         selectedEpisodeID: Binding<UUID?>,
         lastEvidenceAt: Date?,
+        currentLocation: CurrentLocationContext? = nil,
+        connectsToCurrentLocation: Bool = false,
         allowsEditing: Bool = true,
         allowsSuppression: Bool = true,
         onEdit: @escaping (TimelineEpisode) -> Void,
@@ -21,6 +27,8 @@ struct DayTimeline: View {
         self.episodes = episodes
         _selectedEpisodeID = selectedEpisodeID
         self.lastEvidenceAt = lastEvidenceAt
+        self.currentLocation = currentLocation
+        self.connectsToCurrentLocation = connectsToCurrentLocation
         self.allowsEditing = allowsEditing
         self.allowsSuppression = allowsSuppression
         self.onEdit = onEdit
@@ -32,14 +40,16 @@ struct DayTimeline: View {
             ForEach(Array(episodes.enumerated()), id: \.element.id) { index, episode in
                 TimelineEpisodeRow(
                     episode: episode,
+                    mapSequenceNumber: mapSequenceNumbers[episode.id],
                     isSelected: selectedEpisodeID == episode.id,
                     drawsTopLine: index > 0,
-                    drawsBottomLine: index < episodes.count - 1,
+                    drawsBottomLine: index < episodes.count - 1 || connectsToCurrentLocation,
                     lastEvidenceAt: lastEvidenceAt,
+                    currentLocation: currentLocation,
                     allowsEditing: allowsEditing,
                     allowsSuppression: allowsSuppression,
                     onSelect: {
-                        withAnimation(.snappy) {
+                        withAnimation(reduceMotion ? nil : .snappy) {
                             selectedEpisodeID = selectedEpisodeID == episode.id ? nil : episode.id
                         }
                     },
@@ -54,16 +64,30 @@ struct DayTimeline: View {
                 )
             }
         }
-        .animation(.snappy, value: selectedEpisodeID)
+        .animation(reduceMotion ? nil : .snappy, value: selectedEpisodeID)
+    }
+
+    private var mapSequenceNumbers: [UUID: Int] {
+        var nextNumber = 1
+        var numbers: [UUID: Int] = [:]
+
+        for episode in episodes
+        where episode.kind == .stay && episode.latitude != nil && episode.longitude != nil {
+            numbers[episode.id] = nextNumber
+            nextNumber += 1
+        }
+        return numbers
     }
 }
 
 private struct TimelineEpisodeRow: View {
     let episode: TimelineEpisode
+    let mapSequenceNumber: Int?
     let isSelected: Bool
     let drawsTopLine: Bool
     let drawsBottomLine: Bool
     let lastEvidenceAt: Date?
+    let currentLocation: CurrentLocationContext?
     let allowsEditing: Bool
     let allowsSuppression: Bool
     let onSelect: () -> Void
@@ -74,8 +98,45 @@ private struct TimelineEpisodeRow: View {
         allowsEditing && episode.kind == .stay
     }
 
+    private var canShowOnMap: Bool {
+        episode.kind == .stay && episode.latitude != nil && episode.longitude != nil
+    }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 10) {
+            if canShowOnMap {
+                Button(action: onSelect) {
+                    episodeContent
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.daytraceRowLink)
+                .accessibilityHint("地図をこの場所へ移動します")
+            } else {
+                episodeContent
+            }
+
+            if canEdit {
+                Button("修正", systemImage: "slider.horizontal.3", action: onEdit)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.daytraceInk)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 10)
+                    .background(Color.daytraceInk.opacity(0.1), in: .capsule)
+                    .accessibilityHint("場所と時刻を修正します")
+            }
+        }
+        .contextMenu {
+            if canEdit {
+                Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
+                if allowsSuppression {
+                    Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
+                }
+            }
+        }
+    }
+
+    private var episodeContent: some View {
+        HStack(alignment: .top, spacing: 13) {
             Text(TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -116,43 +177,191 @@ private struct TimelineEpisodeRow: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if canEdit && isSelected {
-                    Label("長押しして修正", systemImage: "hand.tap")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 4)
+                if canShowOnMap {
+                    Label(
+                        mapLinkTitle,
+                        systemImage: isSelected ? "checkmark.circle.fill" : "map"
+                    )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.daytraceInk)
+                        .padding(.top, 3)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, episode.kind == .stay ? 30 : 22)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
-        .onLongPressGesture(minimumDuration: 0.35) {
-            if canEdit { onEdit() }
-        }
-        .contextMenu {
-            if canEdit {
-                Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
-                if allowsSuppression {
-                    Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
-                }
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction(named: canEdit ? "修正" : "選択") {
-            canEdit ? onEdit() : onSelect()
+            .padding(.bottom, episode.kind == .stay ? DS.timelineRowSpacing : DS.timelineTransitionSpacing)
         }
     }
 
+    private var mapLinkTitle: String {
+        guard let mapSequenceNumber else {
+            return isSelected ? "地図で表示中" : "地図で見る"
+        }
+        return isSelected
+            ? "地図の\(mapSequenceNumber)番を表示中"
+            : "地図の\(mapSequenceNumber)番を見る"
+    }
+
     private var openEndedStatus: String {
+        if let currentLocation {
+            return CurrentLocationProjection.matches(episode, currentLocation: currentLocation)
+                ? "現在"
+                : "終了時刻を確認"
+        }
         guard let lastEvidenceAt else { return "終了時刻を確認" }
         let age = Date.now.timeIntervalSince(lastEvidenceAt)
         if age <= 20 * 60 {
             return "現在"
         }
         return "最後に確認 \(TimelineFormatting.clock(lastEvidenceAt, timeZoneIdentifier: episode.timeZoneIdentifier))"
+    }
+}
+
+struct CurrentLocationTimelineRow: View {
+    let currentLocation: CurrentLocationContext
+    let placeName: String
+    let mapSequenceNumber: Int
+    let connectsFromPrevious: Bool
+    let onRegisterStay: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 13) {
+            Text(TimelineFormatting.clock(
+                currentLocation.startDate,
+                timeZoneIdentifier: currentLocation.timeZoneIdentifier
+            ))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .frame(width: 43, alignment: .trailing)
+            .padding(.top, 1)
+
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(connectsFromPrevious ? Color.secondary.opacity(0.22) : .clear)
+                    .frame(width: DS.timelineLine, height: 8)
+
+                ZStack {
+                    Circle()
+                        .fill(Color.daytraceInk.opacity(0.16))
+                        .frame(width: 22, height: 22)
+
+                    Circle()
+                        .fill(Color.daytraceInk)
+                        .frame(width: DS.timelineDot, height: DS.timelineDot)
+                }
+
+                Rectangle()
+                    .fill(.clear)
+                    .frame(width: DS.timelineLine)
+            }
+            .frame(width: DS.timelineRailWidth)
+            .frame(minHeight: 82, maxHeight: .infinity)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 7) {
+                    Text(placeName)
+                        .font(.body.weight(.semibold))
+
+                    Text("いま")
+                        .font(.caption.bold())
+                        .foregroundStyle(Color.daytraceInk)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.tint.opacity(0.1), in: .capsule)
+                }
+
+                Text("少なくとも \(TimelineFormatting.clock(currentLocation.startDate, timeZoneIdentifier: currentLocation.timeZoneIdentifier)) から")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Label("地図の\(mapSequenceNumber)番・滞在判定中", systemImage: "location.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.daytraceInk)
+
+                Button(action: onRegisterStay) {
+                    Label("ここを滞在として登録", systemImage: "plus.circle")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, DS.timelineRowSpacing)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            "現在地、\(placeName)、少なくとも\(TimelineFormatting.clock(currentLocation.startDate, timeZoneIdentifier: currentLocation.timeZoneIdentifier))から、滞在判定中"
+        )
+    }
+}
+
+struct CurrentLocationTransitionContext: Equatable {
+    let kind: EpisodeKind
+    let startDate: Date
+    let endDate: Date
+    let timeZoneIdentifier: String
+}
+
+struct CurrentLocationTransitionRow: View {
+    let transition: CurrentLocationTransitionContext
+
+    private var title: String {
+        transition.kind == .move ? "移動中" : "記録のない区間"
+    }
+
+    private var subtitle: String? {
+        transition.kind == .gap ? "この間の位置情報を確認できませんでした" : nil
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 13) {
+            Text(TimelineFormatting.clock(
+                transition.startDate,
+                timeZoneIdentifier: transition.timeZoneIdentifier
+            ))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .frame(width: 43, alignment: .trailing)
+            .padding(.top, 1)
+
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.22))
+                    .frame(width: DS.timelineLine, height: 8)
+
+                Image(systemName: transition.kind == .move ? "arrow.down" : "ellipsis")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                    .frame(width: DS.timelineDot, height: DS.timelineDot)
+
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.22))
+                    .frame(width: DS.timelineLine)
+            }
+            .frame(width: DS.timelineRailWidth)
+            .frame(minHeight: 52, maxHeight: .infinity)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let duration = TimelineFormatting.duration(from: transition.startDate, to: transition.endDate) {
+                    Text(duration)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, DS.timelineTransitionSpacing)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title)、\(TimelineFormatting.duration(from: transition.startDate, to: transition.endDate) ?? "")")
     }
 }
 
@@ -175,8 +384,8 @@ private struct TimelineRail: View {
                     .frame(width: DS.timelineLine)
             }
         }
-        .frame(width: 20)
-        .frame(minHeight: episode.kind == .stay ? 66 : 52)
+        .frame(width: DS.timelineRailWidth)
+        .frame(minHeight: episode.kind == .stay ? 66 : 52, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -189,17 +398,17 @@ private struct TimelineRail: View {
                     .frame(width: DS.timelineDot, height: DS.timelineDot)
             } else {
                 Circle()
-                    .fill(.tint)
+                    .fill(Color.daytraceInk)
                     .frame(width: DS.timelineDot, height: DS.timelineDot)
             }
         case .move:
             Image(systemName: "arrow.down")
-                .font(.caption2.weight(.bold))
+                .font(.caption.bold())
                 .foregroundStyle(.secondary)
                 .frame(width: DS.timelineDot, height: DS.timelineDot)
         case .gap:
             Image(systemName: "ellipsis")
-                .font(.caption2.weight(.bold))
+                .font(.caption.bold())
                 .foregroundStyle(.secondary)
                 .frame(width: DS.timelineDot, height: DS.timelineDot)
         }

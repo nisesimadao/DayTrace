@@ -6,33 +6,44 @@ extension Notification.Name {
 }
 
 struct AppShellView: View {
-    @State private var selectedTab: AppTab = .today
+    @State private var selectedTab: AppTab
+
+    init() {
+#if DEBUG
+        let requestedTab = ProcessInfo.processInfo.environment["DAYTRACE_START_TAB"]
+        _selectedTab = State(initialValue: requestedTab == "history" ? .history : .today)
+#else
+        _selectedTab = State(initialValue: .today)
+#endif
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            NavigationStack {
-                TodayView()
+            Tab("今日", systemImage: "sun.max", value: AppTab.today) {
+                NavigationStack {
+                    TodayView()
+                }
             }
-            .tabItem {
-                Label("今日", systemImage: "clock")
-            }
-            .tag(AppTab.today)
 
-            NavigationStack {
-                HistoryRootView()
+            Tab("履歴", systemImage: "calendar", value: AppTab.history) {
+                NavigationStack {
+                    HistoryRootView()
+                }
             }
-            .tabItem {
-                Label("履歴", systemImage: "calendar")
-            }
-            .tag(AppTab.history)
         }
+        .daytraceModernTabBar()
         .onReceive(NotificationCenter.default.publisher(for: .daytraceOpenToday)) { _ in
             selectedTab = .today
         }
         .onOpenURL { url in
             guard url.scheme == "daytrace" else { return }
-            if url.host == "today" {
+            switch url.host {
+            case "today":
                 selectedTab = .today
+            case "history":
+                selectedTab = .history
+            default:
+                break
             }
         }
     }

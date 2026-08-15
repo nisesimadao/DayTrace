@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/daytrace-header.svg" alt="DayTrace — Remember your day." width="100%">
+  <img src="assets/daytrace-header.png" alt="DayTrace — Diary first. Location is context." width="100%">
 </p>
 
 # DayTrace
@@ -27,7 +27,7 @@ The product is intentionally not a GPS dashboard. Raw observations, automatic in
 - `Stay / Move / Gap` canonical timeline
 - Explicit Gap generation instead of fabricated movement
 - Place learning after user confirmation, including nearby same-name Place reuse to reduce GPS-drift duplicates
-- User-invoked Apple Maps place/address suggestions in the Stay editor; a suggestion is not treated as confirmation or learned truth until the user saves/affirms it
+- Apple Maps nearby POI suggestions can prefill unresolved Stay names, and user-invoked place/address suggestions remain available in the Stay editor; suggestions are not treated as confirmation or learned truth until the user saves/affirms them
 - Long-press Stay editor for place name and arrival/departure time
 - Reversible Stay suppression with undo
 - Persistent `UserAssertion` layer that protects manual corrections from re-analysis

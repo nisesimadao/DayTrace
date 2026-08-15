@@ -109,7 +109,7 @@ Normal edits affect canonical memory, not raw evidence:
 - Rename / arrival / departure corrections create or update `UserAssertion` records.
 - Stay suppression is reversible and represented as an assertion.
 - Confirmation can learn a reusable Place.
-- A user can explicitly ask Apple Maps for a place/address suggestion in the Stay editor; the suggestion is only a candidate and is not automatically treated as a confirmed learned Place.
+- DayTrace can use Apple Maps nearby POI lookup to prefill an unresolved Stay name, and a user can explicitly ask for a place/address suggestion in the Stay editor; both are only candidates and are not treated as confirmed learned Places until the user saves/affirms them.
 - Overlapping Stay edits are rejected structurally.
 - Raw evidence remains separate from the user's corrected Timeline.
 
