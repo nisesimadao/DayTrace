@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/daytrace-header.svg" alt="DayTrace — Remember your day." width="100%">
+  <img src="assets/daytrace-header.png" alt="DayTrace — Diary first. Location is context." width="100%">
 </p>
 
 # DayTrace
