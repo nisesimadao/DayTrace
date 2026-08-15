@@ -543,13 +543,10 @@ final class RegressionTests: XCTestCase {
         let transitions = try context.fetch(FetchDescriptor<TimelineEpisode>())
             .filter { $0.kind != .stay }
             .sorted { $0.startDate < $1.startDate }
-        XCTAssertEqual(transitions.count, 2)
-        XCTAssertEqual(transitions.first?.kind, .gap)
+        XCTAssertEqual(transitions.count, 1)
+        XCTAssertEqual(transitions.first?.kind, .move)
         XCTAssertEqual(transitions.first?.startDate, departure)
-        XCTAssertEqual(transitions.first?.endDate, departure.addingTimeInterval(20 * 60))
-        XCTAssertEqual(transitions.last?.kind, .move)
-        XCTAssertEqual(transitions.last?.startDate, departure.addingTimeInterval(20 * 60))
-        XCTAssertEqual(transitions.last?.endDate, nextArrival)
+        XCTAssertEqual(transitions.first?.endDate, nextArrival)
     }
 
     @MainActor

@@ -125,11 +125,10 @@ struct TodayView: View {
             }
             .sorted { $0.timestamp < $1.timestamp }
 
-        let startDate = movementSamples.first?.timestamp ?? routeStart
-        guard currentLocation.lastEvidenceAt.timeIntervalSince(startDate) >= 60 else { return nil }
+        guard currentLocation.lastEvidenceAt.timeIntervalSince(routeStart) >= 60 else { return nil }
         return CurrentLocationTransitionContext(
             kind: movementSamples.isEmpty ? .gap : .move,
-            startDate: startDate,
+            startDate: routeStart,
             endDate: currentLocation.lastEvidenceAt,
             timeZoneIdentifier: currentLocation.timeZoneIdentifier
         )
@@ -184,34 +183,38 @@ struct TodayView: View {
 
                 if todayEpisodes.isEmpty && provisionalCurrentLocation == nil {
                     EmptyTimelineState()
-                } else if !todayEpisodes.isEmpty {
-                    DayTimeline(
-                        episodes: todayEpisodes,
-                        selectedEpisodeID: $selectedEpisodeID,
-                        lastEvidenceAt: nil,
-                        currentLocation: currentLocation,
-                        connectsToCurrentLocation: provisionalCurrentLocation != nil,
-                        onEdit: { episode in
-                            stayEditSelection = StayEditSelection(episode: episode)
-                        },
-                        onSuppress: suppress
-                    )
-                }
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if !todayEpisodes.isEmpty {
+                            DayTimeline(
+                                episodes: todayEpisodes,
+                                selectedEpisodeID: $selectedEpisodeID,
+                                lastEvidenceAt: nil,
+                                currentLocation: currentLocation,
+                                connectsToCurrentLocation: currentLocationTransition != nil || provisionalCurrentLocation != nil,
+                                onEdit: { episode in
+                                    stayEditSelection = StayEditSelection(episode: episode)
+                                },
+                                onSuppress: suppress
+                            )
+                        }
 
-                if let currentLocationTransition {
-                    CurrentLocationTransitionRow(transition: currentLocationTransition)
-                        .transition(.opacity)
-                }
+                        if let currentLocationTransition {
+                            CurrentLocationTransitionRow(transition: currentLocationTransition)
+                                .transition(.opacity)
+                        }
 
-                if let provisionalCurrentLocation {
-                    CurrentLocationTimelineRow(
-                        currentLocation: provisionalCurrentLocation,
-                        placeName: currentLocationName,
-                        mapSequenceNumber: currentMapSequenceNumber,
-                        connectsFromPrevious: !todayEpisodes.isEmpty,
-                        onRegisterStay: registerCurrentLocationAsStay
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        if let provisionalCurrentLocation {
+                            CurrentLocationTimelineRow(
+                                currentLocation: provisionalCurrentLocation,
+                                placeName: currentLocationName,
+                                mapSequenceNumber: currentMapSequenceNumber,
+                                connectsFromPrevious: currentLocationTransition != nil || !todayEpisodes.isEmpty,
+                                onRegisterStay: registerCurrentLocationAsStay
+                            )
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
+                    }
                 }
             }
             .padding(.horizontal, DS.horizontalPadding)
@@ -269,7 +272,7 @@ struct TodayView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 11)
-                .daytraceGlassSurface(cornerRadius: 22)
+                .daytraceGlassSurface(cornerRadius: DS.contentCornerRadius)
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 6)
                 .transition(.move(edge: .bottom).combined(with: .opacity))

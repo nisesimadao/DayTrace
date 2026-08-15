@@ -12,7 +12,9 @@ The GitHub Release includes an **unsigned IPA** plus its SHA-256 checksum. Re-si
 
 ## Unreleased polish
 
-- Added a new DayTrace mascot, app icon, in-app wordmark, and README header artwork.
+- Replaced the character-style mark with a calm page-and-route symbol across the app icon, in-app wordmark, top-device treatment, and README header.
+- Movement duration now uses the previous Stay departure and next Stay arrival whenever route evidence confirms movement; a late first GPS sample no longer shortens the displayed trip.
+- Joined the live current-location transition into one continuous Timeline and normalized its rail height, row spacing, selection feedback, shared corner radii, and screen gutters.
 - Refined Today and History around the diary-first hierarchy; the learned-places map is now a secondary History destination instead of a nested tab.
 - Adopted native iOS 26 Liquid Glass for controls and navigation, with system-material fallbacks on iOS 18–25 and Reduce Motion-aware transitions.
 - Kept the Dynamic Island wordmark inside the status-area safe zone and omitted it on notch devices where it cannot fit reliably.

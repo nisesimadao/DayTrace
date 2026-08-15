@@ -251,9 +251,9 @@ private struct ExpandedMapTimelinePanel: View {
             }
             .frame(maxHeight: 236)
             .scrollContentBackground(.hidden)
-            .background(.thinMaterial, in: .rect(cornerRadius: 18))
+            .background(.thinMaterial, in: .rect(cornerRadius: DS.controlCornerRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: 18)
+                RoundedRectangle(cornerRadius: DS.controlCornerRadius)
                     .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                     .allowsHitTesting(false)
             }
@@ -380,7 +380,11 @@ private struct ExpandedMapTimelineRow: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 10)
-            .background(isSelected ? Color.primary.opacity(0.045) : Color.clear, in: .rect(cornerRadius: 14))
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(isSelected ? Color.daytraceInk : .clear)
+                    .frame(width: 3, height: 28)
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(index)番目、\(episode.title)へ移動")

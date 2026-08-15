@@ -7,104 +7,79 @@ struct DaytraceBrandMark: View {
     var body: some View {
         ZStack {
             if showsBackground {
-                RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
+                Rectangle()
+                    .fill(Color.daytracePaper)
             }
 
-            mascot
-                .padding(showsBackground ? size * 0.08 : 0)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
-    }
-
-    private var mascot: some View {
-        ZStack {
-            Circle()
-                .fill(navyGradient)
-                .frame(width: size * 0.76, height: size * 0.76)
-                .offset(x: -size * 0.045, y: size * 0.015)
-
-            DaytraceStemShape()
-                .fill(navyGradient)
-
-            Circle()
-                .fill(apricotGradient)
-                .frame(width: size * 0.58, height: size * 0.58)
-                .offset(x: -size * 0.045, y: size * 0.015)
-
-            eye(x: -0.17)
-            eye(x: 0.09)
-
-            Path { path in
-                path.move(to: CGPoint(x: size * 0.39, y: size * 0.58))
-                path.addCurve(
-                    to: CGPoint(x: size * 0.57, y: size * 0.58),
-                    control1: CGPoint(x: size * 0.43, y: size * 0.65),
-                    control2: CGPoint(x: size * 0.53, y: size * 0.65)
+            DaytracePageShape()
+                .stroke(
+                    Color.daytraceIndigo,
+                    style: StrokeStyle(
+                        lineWidth: size * 0.075,
+                        lineCap: .round,
+                        lineJoin: .round
+                    )
                 )
-            }
-            .stroke(
-                Color.daytraceInk,
-                style: StrokeStyle(lineWidth: size * 0.052, lineCap: .round)
-            )
 
-            Image(systemName: "sparkle")
-                .font(.system(size: size * 0.13, weight: .semibold))
-                .foregroundStyle(Color.daytraceSeafoam)
-                .offset(x: size * 0.31, y: -size * 0.34)
+            DaytraceRouteShape()
+                .stroke(
+                    Color.daytraceIndigo,
+                    style: StrokeStyle(
+                        lineWidth: size * 0.065,
+                        lineCap: .round,
+                        lineJoin: .round
+                    )
+                )
+
+            Circle()
+                .fill(Color.daytraceTerracotta)
+                .frame(width: size * 0.105, height: size * 0.105)
+                .offset(x: size * 0.205, y: -size * 0.095)
         }
+        .padding(size * 0.17)
         .frame(width: size, height: size)
-        .compositingGroup()
-    }
-
-    private func eye(x: Double) -> some View {
-        Capsule()
-            .fill(navyGradient)
-            .frame(width: size * 0.105, height: size * 0.15)
-            .overlay(alignment: .topLeading) {
-                Circle()
-                    .fill(.white.opacity(0.92))
-                    .frame(width: size * 0.036, height: size * 0.036)
-                    .padding(size * 0.016)
-            }
-            .offset(x: size * x, y: -size * 0.055)
-    }
-
-    private var navyGradient: LinearGradient {
-        LinearGradient(
-            colors: [Color(red: 0.07, green: 0.16, blue: 0.34), Color.daytraceInk],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    private var apricotGradient: LinearGradient {
-        LinearGradient(
-            colors: [Color(red: 1.0, green: 0.74, blue: 0.61), Color(red: 0.98, green: 0.59, blue: 0.43)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        .background(showsBackground ? Color.daytracePaper : .clear)
+        .clipShape(.rect(cornerRadius: showsBackground ? size * 0.22 : 0))
+        .accessibilityHidden(true)
     }
 }
 
-private struct DaytraceStemShape: Shape {
+private struct DaytracePageShape: Shape {
     func path(in rect: CGRect) -> Path {
         let point: (CGFloat, CGFloat) -> CGPoint = { x, y in
             CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
         }
 
         var path = Path()
-        path.move(to: point(0.63, 0.22))
-        path.addCurve(to: point(0.76, 0.34), control1: point(0.71, 0.22), control2: point(0.76, 0.27))
-        path.addLine(to: point(0.76, 0.70))
-        path.addCurve(to: point(0.83, 0.76), control1: point(0.76, 0.74), control2: point(0.79, 0.74))
-        path.addCurve(to: point(0.85, 0.86), control1: point(0.88, 0.78), control2: point(0.88, 0.83))
-        path.addCurve(to: point(0.76, 0.91), control1: point(0.83, 0.90), control2: point(0.78, 0.92))
-        path.addCurve(to: point(0.68, 0.82), control1: point(0.71, 0.90), control2: point(0.68, 0.87))
-        path.addLine(to: point(0.68, 0.38))
-        path.addCurve(to: point(0.63, 0.22), control1: point(0.68, 0.30), control2: point(0.66, 0.25))
+        path.move(to: point(0.20, 0.08))
+        path.addLine(to: point(0.64, 0.08))
+        path.addLine(to: point(0.90, 0.34))
+        path.addLine(to: point(0.90, 0.78))
+        path.addCurve(to: point(0.70, 0.94), control1: point(0.90, 0.88), control2: point(0.82, 0.94))
+        path.addLine(to: point(0.20, 0.94))
+        path.addCurve(to: point(0.08, 0.80), control1: point(0.12, 0.94), control2: point(0.08, 0.88))
+        path.addLine(to: point(0.08, 0.22))
+        path.addCurve(to: point(0.20, 0.08), control1: point(0.08, 0.14), control2: point(0.13, 0.08))
         path.closeSubpath()
+
+        path.move(to: point(0.64, 0.09))
+        path.addLine(to: point(0.64, 0.31))
+        path.addCurve(to: point(0.87, 0.34), control1: point(0.64, 0.33), control2: point(0.80, 0.34))
+        return path
+    }
+}
+
+private struct DaytraceRouteShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let point: (CGFloat, CGFloat) -> CGPoint = { x, y in
+            CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+        }
+
+        var path = Path()
+        path.move(to: point(0.18, 0.82))
+        path.addCurve(to: point(0.54, 0.62), control1: point(0.28, 0.68), control2: point(0.50, 0.75))
+        path.addCurve(to: point(0.35, 0.49), control1: point(0.58, 0.54), control2: point(0.35, 0.57))
+        path.addCurve(to: point(0.70, 0.43), control1: point(0.35, 0.42), control2: point(0.58, 0.43))
         return path
     }
 }

@@ -862,7 +862,7 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
-    func testTransitionBeforeFirstLocationSampleBecomesGapThenMove() throws {
+    func testTransitionUsesStayBoundariesWhenFirstLocationSampleIsLate() throws {
         let context = try makeContext()
         let firstDeparture = baseTime.addingTimeInterval(60 * 60)
         let firstMovingSample = firstDeparture.addingTimeInterval(2 * 60 * 60 + 38 * 60)
@@ -883,11 +883,9 @@ final class DayProjectionTests: XCTestCase {
         let transitions = try context.fetch(FetchDescriptor<TimelineEpisode>())
             .filter { $0.kind != .stay }
             .sorted { $0.startDate < $1.startDate }
-        XCTAssertEqual(transitions.map(\.kind), [.gap, .move])
+        XCTAssertEqual(transitions.map(\.kind), [.move])
         XCTAssertEqual(transitions[0].startDate, firstDeparture)
-        XCTAssertEqual(transitions[0].endDate, firstMovingSample)
-        XCTAssertEqual(transitions[1].startDate, firstMovingSample)
-        XCTAssertEqual(transitions[1].endDate, secondArrival)
+        XCTAssertEqual(transitions[0].endDate, secondArrival)
     }
 
     @MainActor

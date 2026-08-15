@@ -5,11 +5,9 @@ struct DaytraceWordmark: View {
     var color: Color? = nil
 
     var body: some View {
-        HStack(alignment: .center, spacing: 0) {
-            Text("D")
+        HStack(alignment: .center, spacing: 7) {
             DaytraceBrandMark(size: markSize, showsBackground: false)
-                .padding(.horizontal, 1)
-            Text("ytrace")
+            Text("DayTrace")
         }
         .font(.system(.headline, design: .rounded, weight: .bold))
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)

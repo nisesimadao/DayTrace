@@ -2,28 +2,30 @@ import SwiftUI
 import UIKit
 
 enum DS {
-    static let horizontalPadding: CGFloat = 20
-    static let sectionSpacing: CGFloat = 28
-    static let compactSpacing: CGFloat = 10
+    static let horizontalPadding: CGFloat = 18
+    static let sectionSpacing: CGFloat = 24
+    static let compactSpacing: CGFloat = 8
     static let timelineDot: CGFloat = 12
     static let timelineLine: CGFloat = 2
+    static let timelineRailWidth: CGFloat = 20
+    static let timelineRowSpacing: CGFloat = 22
+    static let timelineTransitionSpacing: CGFloat = 16
     static let mapHeight: CGFloat = 190
 
-    static let contentCornerRadius: CGFloat = 22
-    static let controlCornerRadius: CGFloat = 18
-    static let cardPadding: CGFloat = 18
+    static let contentCornerRadius: CGFloat = 18
+    static let controlCornerRadius: CGFloat = 14
+    static let cardPadding: CGFloat = 16
 }
 
 extension Color {
     static let daytraceInk = Color(UIColor { traits in
         traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.80, green: 0.86, blue: 0.94, alpha: 1)
-            : UIColor(red: 0.035, green: 0.122, blue: 0.263, alpha: 1)
+            ? UIColor(red: 0.69, green: 0.75, blue: 0.89, alpha: 1)
+            : UIColor(red: 0.10, green: 0.18, blue: 0.35, alpha: 1)
     })
-    static let daytraceCoral = Color(red: 1.000, green: 0.604, blue: 0.455)
-    static let daytraceCoralSoft = Color(red: 1.000, green: 0.788, blue: 0.702)
-    static let daytraceSeafoam = Color(red: 0.388, green: 0.792, blue: 0.706)
-    static let daytracePaper = Color(red: 0.988, green: 0.969, blue: 0.929)
+    static let daytraceIndigo = Color(red: 0.10, green: 0.18, blue: 0.35)
+    static let daytraceTerracotta = Color(red: 0.78, green: 0.34, blue: 0.22)
+    static let daytracePaper = Color(red: 0.98, green: 0.96, blue: 0.91)
 }
 
 struct GlassActionButtonStyle: ButtonStyle {

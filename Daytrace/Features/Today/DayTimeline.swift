@@ -125,8 +125,6 @@ private struct TimelineEpisodeRow: View {
                     .accessibilityHint("場所と時刻を修正します")
             }
         }
-        .background(isSelected ? Color.daytraceInk.opacity(0.06) : Color.clear, in: .rect(cornerRadius: 14))
-        .padding(.vertical, 2)
         .contextMenu {
             if canEdit {
                 Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
@@ -190,7 +188,7 @@ private struct TimelineEpisodeRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, episode.kind == .stay ? 28 : 20)
+            .padding(.bottom, episode.kind == .stay ? DS.timelineRowSpacing : DS.timelineTransitionSpacing)
         }
     }
 
@@ -255,8 +253,8 @@ struct CurrentLocationTimelineRow: View {
                     .fill(.clear)
                     .frame(width: DS.timelineLine)
             }
-            .frame(width: 20)
-            .frame(minHeight: 82)
+            .frame(width: DS.timelineRailWidth)
+            .frame(minHeight: 82, maxHeight: .infinity)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 7) {
@@ -288,7 +286,7 @@ struct CurrentLocationTimelineRow: View {
                 .padding(.top, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 24)
+            .padding(.bottom, DS.timelineRowSpacing)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
@@ -340,8 +338,8 @@ struct CurrentLocationTransitionRow: View {
                     .fill(Color.secondary.opacity(0.22))
                     .frame(width: DS.timelineLine)
             }
-            .frame(width: 20)
-            .frame(minHeight: 52)
+            .frame(width: DS.timelineRailWidth)
+            .frame(minHeight: 52, maxHeight: .infinity)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
@@ -360,7 +358,7 @@ struct CurrentLocationTransitionRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 20)
+            .padding(.bottom, DS.timelineTransitionSpacing)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title)、\(TimelineFormatting.duration(from: transition.startDate, to: transition.endDate) ?? "")")
@@ -386,8 +384,8 @@ private struct TimelineRail: View {
                     .frame(width: DS.timelineLine)
             }
         }
-        .frame(width: 20)
-        .frame(minHeight: episode.kind == .stay ? 66 : 52)
+        .frame(width: DS.timelineRailWidth)
+        .frame(minHeight: episode.kind == .stay ? 66 : 52, maxHeight: .infinity)
     }
 
     @ViewBuilder

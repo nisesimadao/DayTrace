@@ -1,39 +1,11 @@
-<svg width="1600" height="480" viewBox="0 0 1600 480" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="navy" x1="240" y1="220" x2="790" y2="850" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#142D5B"/>
-      <stop offset="1" stop-color="#071A38"/>
-    </linearGradient>
-    <linearGradient id="apricot" x1="320" y1="320" x2="650" y2="730" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FFBE9D"/>
-      <stop offset="1" stop-color="#FA9370"/>
-    </linearGradient>
-  </defs>
-  <rect width="1600" height="480" rx="40" fill="#F7F5F0"/>
-
-  <g transform="translate(72 52) scale(.37)">
-    <circle cx="470" cy="500" r="300" fill="url(#navy)"/>
-    <path d="M625 216C718 224 770 283 770 368V692C770 729 784 744 819 756C870 774 881 839 846 875C812 911 747 905 716 865C696 839 692 812 692 777V382C692 296 673 250 625 216Z" fill="url(#navy)"/>
-    <circle cx="470" cy="500" r="224" fill="url(#apricot)"/>
-    <ellipse cx="390" cy="486" rx="43" ry="61" fill="url(#navy)"/>
-    <ellipse cx="550" cy="486" rx="43" ry="61" fill="url(#navy)"/>
-    <circle cx="377" cy="465" r="14" fill="#FFFDF8"/>
-    <circle cx="537" cy="465" r="14" fill="#FFFDF8"/>
-    <path d="M416 585C444 622 496 623 525 585" stroke="#091F43" stroke-width="34" stroke-linecap="round"/>
-    <path d="M782 190C782 230 761 251 721 251C761 251 782 272 782 312C782 272 803 251 843 251C803 251 782 230 782 190Z" fill="#63CAB4"/>
+<svg width="1600" height="480" viewBox="0 0 1600 480" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="480" rx="32" fill="#FAF4E9"/>
+  <g transform="translate(78 58) scale(.355)">
+    <path d="M292 210H618L793 385V755C793 839 740 884 656 884H292C218 884 180 838 180 764V330C180 250 218 210 292 210Z" fill="none" stroke="#192E59" stroke-width="76" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M620 213V354C620 382 638 395 668 395H785" fill="none" stroke="#192E59" stroke-width="76" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M257 766C340 636 522 708 548 599C568 515 422 509 438 444C454 382 587 399 681 390" fill="none" stroke="#192E59" stroke-width="60" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="716" cy="387" r="47" fill="#C75738"/>
   </g>
-
-  <text x="482" y="228" fill="#091F43" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="108" font-weight="750">D</text>
-  <g transform="translate(552 115) scale(.125)">
-    <circle cx="470" cy="500" r="300" fill="url(#navy)"/>
-    <path d="M625 216C718 224 770 283 770 368V692C770 729 784 744 819 756C870 774 881 839 846 875C812 911 747 905 716 865C696 839 692 812 692 777V382C692 296 673 250 625 216Z" fill="url(#navy)"/>
-    <circle cx="470" cy="500" r="224" fill="url(#apricot)"/>
-    <ellipse cx="390" cy="486" rx="43" ry="61" fill="url(#navy)"/>
-    <ellipse cx="550" cy="486" rx="43" ry="61" fill="url(#navy)"/>
-    <circle cx="377" cy="465" r="14" fill="#FFFDF8"/>
-    <circle cx="537" cy="465" r="14" fill="#FFFDF8"/>
-    <path d="M416 585C444 622 496 623 525 585" stroke="#091F43" stroke-width="34" stroke-linecap="round"/>
-  </g>
-  <text x="671" y="228" fill="#091F43" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="108" font-weight="750">ytrace</text>
-  <text x="488" y="309" fill="#596579" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="34" font-weight="500">Diary first. Location is context.</text>
+  <text x="466" y="226" fill="#192E59" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="104" font-weight="760">DayTrace</text>
+  <text x="470" y="304" fill="#596273" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="32" font-weight="520">Diary first. Location is context.</text>
 </svg>

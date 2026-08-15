@@ -315,7 +315,7 @@ struct TimelineEngine {
             }
             .sorted { $0.timestamp < $1.timestamp }
 
-        guard let firstSample = transitionSamples.first else {
+        guard !transitionSamples.isEmpty else {
             insertTransitionEpisode(
                 kind: .gap,
                 startDate: departure,
@@ -326,21 +326,13 @@ struct TimelineEngine {
             return
         }
 
-        if firstSample.timestamp.timeIntervalSince(departure) >= 60 {
-            insertTransitionEpisode(
-                kind: .gap,
-                startDate: departure,
-                endDate: firstSample.timestamp,
-                timeZoneIdentifier: timeZoneIdentifier,
-                context: context
-            )
-        }
-
-        let moveStart = max(departure, firstSample.timestamp)
-        guard nextArrival.timeIntervalSince(moveStart) >= 60 else { return }
+        // A location sample proves that movement happened somewhere in the
+        // stay-to-stay interval; it does not prove that movement began at the
+        // sample timestamp. The visit departure and next arrival remain the
+        // authoritative boundaries for the diary-facing duration.
         insertTransitionEpisode(
             kind: .move,
-            startDate: moveStart,
+            startDate: departure,
             endDate: nextArrival,
             timeZoneIdentifier: timeZoneIdentifier,
             context: context
