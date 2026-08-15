@@ -211,6 +211,7 @@ struct TodayView: View {
             recorder.requestForegroundSnapshot()
             refreshLocationSnapshot(force: true)
             try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
+            await AutomaticPlaceSuggestionService.annotateUnresolvedRecentStays(in: modelContext)
         }
         .onChange(of: recorder.lastEvidenceAt) { _, _ in
             refreshLocationSnapshot(force: false)

@@ -103,7 +103,7 @@ private struct TimelineEpisodeRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 10) {
             if canShowOnMap {
                 Button(action: onSelect) {
                     episodeContent
@@ -120,12 +120,13 @@ private struct TimelineEpisodeRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.daytraceInk)
                     .frame(minHeight: 44)
-                    .padding(.horizontal, 9)
+                    .padding(.horizontal, 10)
                     .background(Color.daytraceInk.opacity(0.1), in: .capsule)
                     .accessibilityHint("場所と時刻を修正します")
             }
         }
         .background(isSelected ? Color.daytraceInk.opacity(0.06) : Color.clear, in: .rect(cornerRadius: 14))
+        .padding(.vertical, 2)
         .contextMenu {
             if canEdit {
                 Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
@@ -137,7 +138,7 @@ private struct TimelineEpisodeRow: View {
     }
 
     private var episodeContent: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 13) {
             Text(TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -189,7 +190,7 @@ private struct TimelineEpisodeRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, episode.kind == .stay ? 30 : 22)
+            .padding(.bottom, episode.kind == .stay ? 28 : 20)
         }
     }
 
@@ -225,7 +226,7 @@ struct CurrentLocationTimelineRow: View {
     let onRegisterStay: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 13) {
             Text(TimelineFormatting.clock(
                 currentLocation.startDate,
                 timeZoneIdentifier: currentLocation.timeZoneIdentifier
@@ -287,7 +288,7 @@ struct CurrentLocationTimelineRow: View {
                 .padding(.top, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 26)
+            .padding(.bottom, 24)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(

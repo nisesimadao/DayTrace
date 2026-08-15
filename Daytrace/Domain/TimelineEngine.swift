@@ -271,6 +271,15 @@ struct TimelineEngine {
             switch assertion.type {
             case .rename:
                 if let title = assertion.replacementTitle { episode.title = title }
+            case .automaticPlaceSuggestion:
+                if !assertionTypes.contains(.rename),
+                   resolvedPlace == nil,
+                   let title = assertion.replacementTitle {
+                    episode.title = title
+                    if episode.subtitle == "場所を確認" {
+                        episode.subtitle = "近くのスポット候補・確認してください"
+                    }
+                }
             case .retime:
                 if let start = assertion.replacementStart { episode.startDate = start }
                 episode.endDate = assertion.replacementEnd
@@ -296,13 +305,60 @@ struct TimelineEngine {
         locations: [LocationEvidence],
         context: ModelContext
     ) {
-        let transitionSamples = locations.filter { $0.timestamp >= departure && $0.timestamp <= nextArrival }
-        let kind: EpisodeKind = transitionSamples.isEmpty ? .gap : .move
+        let transitionSamples = locations
+            .filter {
+                $0.timestamp >= departure
+                    && $0.timestamp <= nextArrival
+                    && $0.horizontalAccuracy >= 0
+                    && $0.horizontalAccuracy <= 1_000
+                    && ($0.source == .standardLocation || $0.source == .significantChange)
+            }
+            .sorted { $0.timestamp < $1.timestamp }
 
+        guard let firstSample = transitionSamples.first else {
+            insertTransitionEpisode(
+                kind: .gap,
+                startDate: departure,
+                endDate: nextArrival,
+                timeZoneIdentifier: timeZoneIdentifier,
+                context: context
+            )
+            return
+        }
+
+        if firstSample.timestamp.timeIntervalSince(departure) >= 60 {
+            insertTransitionEpisode(
+                kind: .gap,
+                startDate: departure,
+                endDate: firstSample.timestamp,
+                timeZoneIdentifier: timeZoneIdentifier,
+                context: context
+            )
+        }
+
+        let moveStart = max(departure, firstSample.timestamp)
+        guard nextArrival.timeIntervalSince(moveStart) >= 60 else { return }
+        insertTransitionEpisode(
+            kind: .move,
+            startDate: moveStart,
+            endDate: nextArrival,
+            timeZoneIdentifier: timeZoneIdentifier,
+            context: context
+        )
+    }
+
+    private func insertTransitionEpisode(
+        kind: EpisodeKind,
+        startDate: Date,
+        endDate: Date,
+        timeZoneIdentifier: String,
+        context: ModelContext
+    ) {
+        guard endDate.timeIntervalSince(startDate) >= 60 else { return }
         context.insert(TimelineEpisode(
             kind: kind,
-            startDate: departure,
-            endDate: nextArrival,
+            startDate: startDate,
+            endDate: endDate,
             title: kind == .move ? "移動" : "記録のない区間",
             subtitle: kind == .gap ? "この間の位置情報を確認できませんでした" : nil,
             confidence: kind == .move ? .medium : .low,

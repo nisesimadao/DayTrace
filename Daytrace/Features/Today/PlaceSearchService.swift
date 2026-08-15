@@ -2,6 +2,18 @@ import MapKit
 
 @MainActor
 enum PlaceSearchService {
+    static func nearbyPointsOfInterest(
+        near coordinate: CLLocationCoordinate2D,
+        radius: CLLocationDistance
+    ) async throws -> [PlaceSearchResult] {
+        let request = MKLocalPointsOfInterestRequest(
+            center: coordinate,
+            radius: radius
+        )
+        let response = try await MKLocalSearch(request: request).start()
+        return response.mapItems.prefix(12).compactMap(makeResult)
+    }
+
     static func search(
         query: String,
         near coordinate: CLLocationCoordinate2D

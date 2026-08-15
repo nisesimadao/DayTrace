@@ -18,3 +18,4 @@ The GitHub Release includes an **unsigned IPA** plus its SHA-256 checksum. Re-si
 - Kept the Dynamic Island wordmark inside the status-area safe zone and omitted it on notch devices where it cannot fit reliably.
 - Added a Debug-only Settings tool that installs or removes deterministic seven-day demo data without touching personal records.
 - Hide Journaling Suggestions from Debug builds when the signing entitlement is unavailable while preserving it for Release builds.
+- Prefill unresolved Stay names with nearby Apple Maps POI suggestions while keeping them unconfirmed until the user reviews/saves them.

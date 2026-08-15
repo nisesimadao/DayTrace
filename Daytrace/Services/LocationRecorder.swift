@@ -257,7 +257,7 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         }
 
         try? context.save()
-        try? TimelineEngine().rebuildRecentTimeline(in: context)
+        rebuildTimelineAndSuggestPlaces(in: context)
         refreshHealth()
     }
 
@@ -289,7 +289,7 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         let freshestDate = adjusted.departure ?? adjusted.arrival ?? observedAt
         lastEvidenceAt = max(lastEvidenceAt ?? .distantPast, freshestDate)
         try? context.save()
-        try? TimelineEngine().rebuildRecentTimeline(in: context)
+        rebuildTimelineAndSuggestPlaces(in: context)
         refreshHealth()
     }
 
@@ -302,6 +302,13 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
 
     private var isAuthorized: Bool {
         authorizationStatus == .authorizedAlways || authorizationStatus == .authorizedWhenInUse
+    }
+
+    private func rebuildTimelineAndSuggestPlaces(in context: ModelContext) {
+        try? TimelineEngine().rebuildRecentTimeline(in: context)
+        Task { @MainActor in
+            await AutomaticPlaceSuggestionService.annotateUnresolvedRecentStays(in: context)
+        }
     }
 
     private var retentionDaysFromDefaults: Int {

@@ -160,8 +160,8 @@ struct ExpandedDayMapView: View {
                     focusCurrentLocation: focusCurrentLocation,
                     registerCurrentLocation: onRegisterCurrentLocation
                 )
-                .padding(.horizontal, DS.horizontalPadding)
-                .padding(.bottom, 8)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
@@ -249,7 +249,7 @@ private struct ExpandedMapTimelinePanel: View {
                     }
                 }
             }
-            .frame(maxHeight: 260)
+            .frame(maxHeight: 236)
             .scrollContentBackground(.hidden)
             .background(.thinMaterial, in: .rect(cornerRadius: 18))
             .overlay {
@@ -259,7 +259,7 @@ private struct ExpandedMapTimelinePanel: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
+        .padding(12)
         .daytraceGlassSurface(tint: Color(.systemBackground).opacity(0.18))
     }
 }
@@ -321,8 +321,8 @@ private struct ExpandedMapCurrentLocationRow: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
         .accessibilityLabel("現在地へ移動")
     }
 }
@@ -378,8 +378,8 @@ private struct ExpandedMapTimelineRow: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 11)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
             .background(isSelected ? Color.primary.opacity(0.045) : Color.clear, in: .rect(cornerRadius: 14))
         }
         .buttonStyle(.plain)
@@ -461,15 +461,17 @@ private struct DayMapCanvas: View, Equatable {
                     )
             }
 
-            ForEach(route.movementSamplePoints) { point in
+            ForEach(visibleMovementSamplePoints(in: route)) { point in
                 Annotation("移動中の記録", coordinate: point.coordinate) {
                     Circle()
                         .fill(visualStyle.movementSampleColor)
-                        .frame(width: 7, height: 7)
+                        .frame(width: visualStyle.movementSampleSize, height: visualStyle.movementSampleSize)
                         .overlay {
                             Circle()
-                                .stroke(visualStyle.markerBackgroundColor.opacity(0.88), lineWidth: 1)
+                                .stroke(visualStyle.markerBackgroundColor.opacity(0.72), lineWidth: 0.75)
                         }
+                        .allowsHitTesting(false)
+                        .zIndex(0)
                         .accessibilityLabel("移動中の位置")
                 }
             }
@@ -718,6 +720,21 @@ private struct DayMapCanvas: View, Equatable {
         return deduplicated
     }
 
+    private func visibleMovementSamplePoints(in route: DayRouteSnapshot) -> [DayRoutePoint] {
+        var anchors = stayPoints.map(\.coordinate)
+        if let currentLocation {
+            anchors.append(currentLocation.coordinate)
+        }
+        guard !anchors.isEmpty else { return route.movementSamplePoints }
+        return route.movementSamplePoints.filter { sample in
+            !anchors.contains { anchor in
+                CLLocation(latitude: sample.latitude, longitude: sample.longitude).distance(
+                    from: CLLocation(latitude: anchor.latitude, longitude: anchor.longitude)
+                ) <= visualStyle.movementSampleAnchorExclusionMeters
+            }
+        }
+    }
+
     private func select(_ point: DayMapStayPoint) {
         withAnimation(reduceMotion ? nil : .snappy) {
             selectedEpisodeID = point.id
@@ -730,10 +747,9 @@ private struct DayMapCanvas: View, Equatable {
             return
         }
 
-        let region = MKCoordinateRegion(
+        let region = focusRegion(
             center: point.coordinate,
-            latitudinalMeters: 900,
-            longitudinalMeters: 900
+            meters: 900
         )
 
         withAnimation(reduceMotion ? nil : .snappy) {
@@ -744,15 +760,24 @@ private struct DayMapCanvas: View, Equatable {
     private func focusMapOnCurrentLocation() {
         guard let currentLocation else { return }
 
-        let region = MKCoordinateRegion(
+        let region = focusRegion(
             center: currentLocation.coordinate,
-            latitudinalMeters: 1_200,
-            longitudinalMeters: 1_200
+            meters: 1_200
         )
 
         withAnimation(reduceMotion ? nil : .snappy) {
             position = .region(region)
         }
+    }
+
+    private func focusRegion(center coordinate: CLLocationCoordinate2D, meters: CLLocationDistance) -> MKCoordinateRegion {
+        var region = MKCoordinateRegion(
+            center: coordinate,
+            latitudinalMeters: meters,
+            longitudinalMeters: meters
+        )
+        region.center.latitude -= region.span.latitudeDelta * visualStyle.focusPanelLatitudeOffsetRatio
+        return region
     }
 }
 
@@ -795,9 +820,23 @@ private enum DayMapVisualStyle: Equatable {
     var movementSampleColor: Color {
         switch self {
         case .compactCard:
-            Color.daytraceInk.opacity(0.42)
+            Color.daytraceInk.opacity(0.34)
         case .expanded:
-            Color.primary.opacity(0.46)
+            Color.primary.opacity(0.30)
+        }
+    }
+
+    var movementSampleSize: CGFloat {
+        switch self {
+        case .compactCard: 5.5
+        case .expanded: 5
+        }
+    }
+
+    var movementSampleAnchorExclusionMeters: CLLocationDistance {
+        switch self {
+        case .compactCard: 70
+        case .expanded: 110
         }
     }
 
@@ -855,6 +894,13 @@ private enum DayMapVisualStyle: Equatable {
         switch self {
         case .compactCard: 1.9
         case .expanded: 1.45
+        }
+    }
+
+    var focusPanelLatitudeOffsetRatio: Double {
+        switch self {
+        case .compactCard: 0
+        case .expanded: 0.20
         }
     }
 }

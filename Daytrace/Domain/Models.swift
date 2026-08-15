@@ -287,6 +287,7 @@ enum EpisodeConfidence: String, Codable, Hashable, Sendable {
 
 enum UserAssertionType: String, Codable, Hashable, Sendable {
     case rename
+    case automaticPlaceSuggestion
     case retime
     case retimeStart
     case retimeEnd
@@ -407,6 +408,7 @@ struct TimelineEditingService {
         }
 
         if safeTitle != episode.title {
+            deactivateAssertions(for: episode.id, type: .automaticPlaceSuggestion, in: context)
             deactivateAssertions(for: episode.id, type: .rename, in: context)
             context.insert(UserAssertion(
                 episodeID: episode.id,
