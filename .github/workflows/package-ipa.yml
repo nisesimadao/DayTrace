@@ -114,17 +114,19 @@ jobs:
               "dist/$IPA_FILE" \
               "dist/$IPA_FILE.sha256" \
               --clobber
-          else
-            RELEASE_FLAGS=()
-            if [[ "$IS_PRERELEASE" == "true" ]]; then
-              RELEASE_FLAGS+=(--prerelease)
-            fi
-
+          elif [[ "$IS_PRERELEASE" == "true" ]]; then
             gh release create "$TAG" \
               "dist/$IPA_FILE" \
               "dist/$IPA_FILE.sha256" \
               --target "$GITHUB_SHA" \
               --title "$TITLE" \
               --notes-file RELEASE_NOTES.md \
-              "${RELEASE_FLAGS[@]}"
+              --prerelease
+          else
+            gh release create "$TAG" \
+              "dist/$IPA_FILE" \
+              "dist/$IPA_FILE.sha256" \
+              --target "$GITHUB_SHA" \
+              --title "$TITLE" \
+              --notes-file RELEASE_NOTES.md
           fi
