@@ -129,7 +129,7 @@ private struct OnboardingBackgroundPage: View {
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 42, weight: .medium))
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
+                .foregroundStyle(Color.daytraceInk)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 10) {
@@ -188,7 +188,7 @@ private struct OnboardingPage: View {
                 Image(systemName: symbol)
                     .font(.system(size: 42, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(Color.daytraceInk)
                     .accessibilityHidden(true)
             } else {
                 DaytraceBrandMark(size: 88)

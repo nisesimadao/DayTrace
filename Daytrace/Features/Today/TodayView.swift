@@ -11,7 +11,6 @@ struct TodayView: View {
     @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
-    @Query(sort: \LocationEvidence.timestamp) private var locationEvidence: [LocationEvidence]
     @Query private var places: [PlaceRecord]
 
     @State private var selectedEpisodeID: UUID?
@@ -21,6 +20,8 @@ struct TodayView: View {
     @State private var undoSuppressedEpisodeID: UUID?
     @State private var isTimelineErrorPresented = false
     @State private var timelineErrorMessage = ""
+    @State private var locationSnapshot = TodayLocationSnapshot.empty
+    @State private var lastLocationSnapshotRefresh: Date?
 
     init() {
 #if DEBUG
@@ -47,11 +48,7 @@ struct TodayView: View {
         }
     }
 
-    private var todayRouteLocations: [LocationEvidence] {
-        locationEvidence.filter {
-            $0.timestamp >= day.start && $0.timestamp < day.end
-        }
-    }
+    private var todayRouteLocations: [LocationEvidence] { locationSnapshot.routeLocations }
 
     private var todayPreviewRouteLocations: [LocationEvidence] {
         let stays = todayEpisodes
@@ -66,10 +63,7 @@ struct TodayView: View {
     }
 
     private var currentLocation: CurrentLocationContext? {
-        CurrentLocationProjection.project(
-            evidence: locationEvidence,
-            dayStart: day.start
-        )
+        locationSnapshot.currentLocation
     }
 
     private var provisionalCurrentLocation: CurrentLocationContext? {
@@ -215,7 +209,11 @@ struct TodayView: View {
         }
         .task {
             recorder.requestForegroundSnapshot()
+            refreshLocationSnapshot(force: true)
             try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
+        }
+        .onChange(of: recorder.lastEvidenceAt) { _, _ in
+            refreshLocationSnapshot(force: false)
         }
         .safeAreaInset(edge: .bottom) {
             if let episodeID = undoSuppressedEpisodeID {
@@ -367,6 +365,72 @@ struct TodayView: View {
             timelineErrorMessage = error.localizedDescription
             isTimelineErrorPresented = true
         }
+    }
+
+    private func refreshLocationSnapshot(force: Bool) {
+        let now = Date.now
+        if !force,
+           let lastLocationSnapshotRefresh,
+           now.timeIntervalSince(lastLocationSnapshotRefresh) < TodayLocationSnapshot.refreshInterval {
+            return
+        }
+
+        let dayStart = day.start
+        let dayEnd = day.end
+        let descriptor = FetchDescriptor<LocationEvidence>(
+            predicate: #Predicate<LocationEvidence> { evidence in
+                evidence.timestamp >= dayStart && evidence.timestamp < dayEnd
+            },
+            sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
+        )
+
+        let evidence = (try? modelContext.fetch(descriptor)) ?? []
+        locationSnapshot = TodayLocationSnapshot(
+            routeLocations: TodayLocationSnapshot.thinnedRouteLocations(from: evidence),
+            currentLocation: CurrentLocationProjection.project(
+                evidence: evidence,
+                dayStart: dayStart
+            )
+        )
+        lastLocationSnapshotRefresh = now
+    }
+}
+
+@MainActor
+private struct TodayLocationSnapshot {
+    static let empty = TodayLocationSnapshot(routeLocations: [], currentLocation: nil)
+    static let refreshInterval: TimeInterval = 20
+    private static let minimumRouteInterval: TimeInterval = 10
+    private static let minimumRouteDistance: CLLocationDistance = 80
+    private static let maximumUsableAccuracy: CLLocationAccuracy = 1_000
+
+    let routeLocations: [LocationEvidence]
+    let currentLocation: CurrentLocationContext?
+
+    static func thinnedRouteLocations(from evidence: [LocationEvidence]) -> [LocationEvidence] {
+        let usableEvidence = evidence.filter {
+            $0.horizontalAccuracy >= 0
+                && $0.horizontalAccuracy <= maximumUsableAccuracy
+                && ($0.source == .standardLocation || $0.source == .significantChange)
+        }
+        guard let first = usableEvidence.first else { return [] }
+
+        var thinned = [first]
+        var lastAccepted = first
+
+        for sample in usableEvidence.dropFirst() {
+            let elapsed = sample.timestamp.timeIntervalSince(lastAccepted.timestamp)
+            let distance = CLLocation(latitude: sample.latitude, longitude: sample.longitude).distance(
+                from: CLLocation(latitude: lastAccepted.latitude, longitude: lastAccepted.longitude)
+            )
+            guard elapsed >= minimumRouteInterval && distance >= minimumRouteDistance else {
+                continue
+            }
+            thinned.append(sample)
+            lastAccepted = sample
+        }
+
+        return thinned
     }
 }
 

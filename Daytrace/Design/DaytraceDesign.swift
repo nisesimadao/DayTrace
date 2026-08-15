@@ -33,7 +33,7 @@ struct GlassActionButtonStyle: ButtonStyle {
                     .padding(.vertical, 11)
                     .glassEffect(
                         prominent
-                            ? .regular.tint(.accentColor.opacity(0.22)).interactive()
+                            ? .regular.tint(Color.daytraceInk.opacity(0.16)).interactive()
                             : .regular.interactive(),
                         in: .rect(cornerRadius: DS.controlCornerRadius)
                     )
@@ -42,7 +42,7 @@ struct GlassActionButtonStyle: ButtonStyle {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 11)
                     .background(
-                        prominent ? AnyShapeStyle(Color.accentColor.opacity(0.14)) : AnyShapeStyle(.thinMaterial),
+                        prominent ? AnyShapeStyle(Color.daytraceInk.opacity(0.14)) : AnyShapeStyle(.thinMaterial),
                         in: RoundedRectangle(cornerRadius: DS.controlCornerRadius, style: .continuous)
                     )
             }

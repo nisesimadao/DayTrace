@@ -46,7 +46,7 @@ struct StayLocationPicker: View {
                                 longitude: longitude
                             )
                         )
-                        .tint(Color.accentColor)
+                        .tint(Color.daytraceInk)
                     }
                     .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
                     .allowsHitTesting(false)
@@ -76,7 +76,7 @@ struct StayLocationPicker: View {
                 systemImage: hasMovedFromOriginal ? "checkmark.circle.fill" : "location"
             )
             .font(.caption)
-            .foregroundStyle(hasMovedFromOriginal ? Color.accentColor : Color.secondary)
+            .foregroundStyle(hasMovedFromOriginal ? Color.daytraceInk : Color.secondary)
         }
         .onChange(of: latitude) { _, _ in focusSelectedLocation() }
         .onChange(of: longitude) { _, _ in focusSelectedLocation() }

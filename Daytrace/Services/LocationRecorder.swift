@@ -57,6 +57,7 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
     private var configured = false
     private var standardUpdatesActive = false
     private var nextLocationSource: EvidenceSource?
+    private var lastPersistedLocation: CLLocation?
 
     private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
     private(set) var accuracyAuthorization: CLAccuracyAuthorization = .reducedAccuracy
@@ -237,6 +238,9 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
             ) else {
                 continue
             }
+            guard shouldPersist(location: location, source: source) else {
+                continue
+            }
 
             context.insert(LocationEvidence(
                 timestamp: location.timestamp,
@@ -249,6 +253,7 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
                 timeZoneIdentifier: zone
             ))
             lastEvidenceAt = max(lastEvidenceAt ?? .distantPast, location.timestamp)
+            lastPersistedLocation = location
         }
 
         try? context.save()
@@ -356,7 +361,22 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
             sortBy: [SortDescriptor(\LocationEvidence.timestamp, order: .reverse)]
         )
         locationDescriptor.fetchLimit = 1
-        let latestLocation = try? context.fetch(locationDescriptor).first?.timestamp
+        let latestLocationEvidence = try? context.fetch(locationDescriptor).first
+        let latestLocation = latestLocationEvidence?.timestamp
+        if let latestLocationEvidence {
+            lastPersistedLocation = CLLocation(
+                coordinate: CLLocationCoordinate2D(
+                    latitude: latestLocationEvidence.latitude,
+                    longitude: latestLocationEvidence.longitude
+                ),
+                altitude: 0,
+                horizontalAccuracy: latestLocationEvidence.horizontalAccuracy,
+                verticalAccuracy: -1,
+                course: latestLocationEvidence.course,
+                speed: latestLocationEvidence.speed,
+                timestamp: latestLocationEvidence.timestamp
+            )
+        }
 
         var visitDescriptor = FetchDescriptor<VisitEvidence>(
             sortBy: [SortDescriptor(\VisitEvidence.observedAt, order: .reverse)]
@@ -368,6 +388,30 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
         lastEvidenceAt = [latestLocation, latestVisitDate]
             .compactMap { $0 }
             .max()
+    }
+
+    private func shouldPersist(location: CLLocation, source: EvidenceSource) -> Bool {
+        guard standardUpdatesActive, source == .standardLocation else {
+            return true
+        }
+        guard let previous = lastPersistedLocation else {
+            return true
+        }
+
+        let sensitivity = TrackingSensitivity.current
+        let elapsed = location.timestamp.timeIntervalSince(previous.timestamp)
+        guard elapsed >= 0 else { return false }
+
+        if elapsed >= sensitivity.persistedStationarySampleInterval {
+            return true
+        }
+
+        let distance = location.distance(from: previous)
+        guard elapsed >= sensitivity.persistedRouteMinimumInterval else {
+            return false
+        }
+
+        return distance >= sensitivity.persistedRouteMinimumDistance
     }
 
     private func upsertVisit(

@@ -79,10 +79,10 @@ private struct HistoryPlacesLink: View {
 
                         Label("場所の地図を開く", systemImage: "arrow.right")
                             .font(.headline)
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(Color.daytraceInk)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background(Color.accentColor.opacity(0.12), in: .capsule)
+                            .background(Color.daytraceInk.opacity(0.12), in: .capsule)
                     }
                 } else {
                     HStack(spacing: 14) {
@@ -101,10 +101,10 @@ private struct HistoryPlacesLink: View {
 
                         Text("開く")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(Color.daytraceInk)
                             .padding(.horizontal, 11)
                             .padding(.vertical, 7)
-                            .background(Color.accentColor.opacity(0.12), in: .capsule)
+                            .background(Color.daytraceInk.opacity(0.12), in: .capsule)
                     }
                 }
             }
@@ -121,9 +121,9 @@ private struct HistoryPlacesLink: View {
     private var mapIcon: some View {
         Image(systemName: "map.fill")
             .font(.title2)
-            .foregroundStyle(.tint)
+            .foregroundStyle(Color.daytraceInk)
             .frame(width: 44, height: 44)
-            .background(Color.accentColor.opacity(0.12), in: .circle)
+            .background(Color.daytraceInk.opacity(0.12), in: .circle)
     }
 }
 
@@ -316,15 +316,15 @@ private struct DayCell: View {
         VStack(spacing: 3) {
             Text(date.formatted(.dateTime.day()))
                 .font(.subheadline.bold().monospacedDigit())
-                .foregroundStyle(hasJournal ? Color.accentColor : .primary)
+                .foregroundStyle(hasJournal ? Color.daytraceInk : .primary)
             Image(systemName: hasJournal ? "book.closed.fill" : hasMemory ? "location.fill" : "circle.fill")
                 .font(.system(size: hasJournal || hasMemory ? 8 : 3, weight: .semibold))
-                .foregroundStyle(hasJournal ? Color.accentColor : hasMemory ? Color.secondary : Color.clear)
+                .foregroundStyle(hasJournal ? Color.daytraceInk : hasMemory ? Color.secondary : Color.clear)
         }
         .frame(maxWidth: .infinity, minHeight: 44)
         .background(
             hasJournal
-                ? Color.accentColor.opacity(0.14)
+                ? Color.daytraceInk.opacity(0.14)
                 : hasMemory
                     ? Color(.secondarySystemFill)
                     : Color(.tertiarySystemFill).opacity(0.5),
@@ -333,7 +333,7 @@ private struct DayCell: View {
         .overlay {
             if Calendar.current.isDateInToday(date) {
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.accentColor, lineWidth: 2)
+                    .stroke(Color.daytraceInk, lineWidth: 2)
             }
         }
         .contentShape(Rectangle())
@@ -464,10 +464,10 @@ private struct RecentDayRow: View {
 
             Text("開く")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.tint)
+                .foregroundStyle(Color.daytraceInk)
                 .padding(.horizontal, 11)
                 .padding(.vertical, 7)
-                .background(Color.accentColor.opacity(0.12), in: .capsule)
+                .background(Color.daytraceInk.opacity(0.12), in: .capsule)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, DS.cardPadding)
@@ -611,10 +611,10 @@ private struct SearchDayRow: View {
 
             Text("開く")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.tint)
+                .foregroundStyle(Color.daytraceInk)
                 .padding(.horizontal, 11)
                 .padding(.vertical, 7)
-                .background(Color.accentColor.opacity(0.12), in: .capsule)
+                .background(Color.daytraceInk.opacity(0.12), in: .capsule)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.cardPadding)

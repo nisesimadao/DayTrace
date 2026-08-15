@@ -118,14 +118,14 @@ private struct TimelineEpisodeRow: View {
             if canEdit {
                 Button("修正", systemImage: "slider.horizontal.3", action: onEdit)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(Color.daytraceInk)
                     .frame(minHeight: 44)
                     .padding(.horizontal, 9)
-                    .background(Color.accentColor.opacity(0.1), in: .capsule)
+                    .background(Color.daytraceInk.opacity(0.1), in: .capsule)
                     .accessibilityHint("場所と時刻を修正します")
             }
         }
-        .background(isSelected ? Color.accentColor.opacity(0.06) : Color.clear, in: .rect(cornerRadius: 14))
+        .background(isSelected ? Color.daytraceInk.opacity(0.06) : Color.clear, in: .rect(cornerRadius: 14))
         .contextMenu {
             if canEdit {
                 Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
@@ -184,7 +184,7 @@ private struct TimelineEpisodeRow: View {
                         systemImage: isSelected ? "checkmark.circle.fill" : "map"
                     )
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(Color.daytraceInk)
                         .padding(.top, 3)
                 }
             }
@@ -242,11 +242,11 @@ struct CurrentLocationTimelineRow: View {
 
                 ZStack {
                     Circle()
-                        .fill(.tint.opacity(0.16))
+                        .fill(Color.daytraceInk.opacity(0.16))
                         .frame(width: 22, height: 22)
 
                     Circle()
-                        .fill(.tint)
+                        .fill(Color.daytraceInk)
                         .frame(width: DS.timelineDot, height: DS.timelineDot)
                 }
 
@@ -264,7 +264,7 @@ struct CurrentLocationTimelineRow: View {
 
                     Text("いま")
                         .font(.caption.bold())
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(Color.daytraceInk)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(.tint.opacity(0.1), in: .capsule)
@@ -276,7 +276,7 @@ struct CurrentLocationTimelineRow: View {
 
                 Label("地図の\(mapSequenceNumber)番・滞在判定中", systemImage: "location.fill")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(Color.daytraceInk)
 
                 Button(action: onRegisterStay) {
                     Label("ここを滞在として登録", systemImage: "plus.circle")
@@ -329,7 +329,7 @@ private struct TimelineRail: View {
                     .frame(width: DS.timelineDot, height: DS.timelineDot)
             } else {
                 Circle()
-                    .fill(.tint)
+                    .fill(Color.daytraceInk)
                     .frame(width: DS.timelineDot, height: DS.timelineDot)
             }
         case .move:

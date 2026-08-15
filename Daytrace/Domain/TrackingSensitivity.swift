@@ -100,4 +100,28 @@ enum TrackingSensitivity: String, CaseIterable, Identifiable, Sendable {
         case .highPrecision: 150
         }
     }
+
+    var persistedRouteMinimumInterval: TimeInterval {
+        switch self {
+        case .lowPower: 0
+        case .balanced: 30
+        case .highPrecision: 20
+        }
+    }
+
+    var persistedRouteMinimumDistance: CLLocationDistance {
+        switch self {
+        case .lowPower: 0
+        case .balanced: 80
+        case .highPrecision: 35
+        }
+    }
+
+    var persistedStationarySampleInterval: TimeInterval {
+        switch self {
+        case .lowPower: 0
+        case .balanced: 10 * 60
+        case .highPrecision: 5 * 60
+        }
+    }
 }

@@ -33,7 +33,7 @@ struct PlaceSearchResultsPanel: View {
                         } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: "mappin.and.ellipse")
-                                    .foregroundStyle(.tint)
+                                    .foregroundStyle(Color.daytraceInk)
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(result.title)

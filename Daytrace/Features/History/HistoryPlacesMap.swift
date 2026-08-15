@@ -204,7 +204,7 @@ private struct HistoryPlaceMarker: View {
                 .shadow(radius: 3, y: 1)
 
             Circle()
-                .fill(Color.accentColor)
+                .fill(Color.daytraceInk)
                 .frame(width: isSelected ? 19 : 15, height: isSelected ? 19 : 15)
         }
     }
@@ -255,7 +255,7 @@ private struct HistoryPlaceRow: View {
         HStack(spacing: 11) {
             Image(systemName: summary.isPrivate ? "lock.circle" : "mappin.circle")
                 .font(.title3)
-                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                .foregroundStyle(isSelected ? Color.daytraceInk : .secondary)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(summary.displayName)
@@ -273,7 +273,7 @@ private struct HistoryPlaceRow: View {
                 systemImage: isSelected ? "checkmark.circle.fill" : "map"
             )
             .font(.caption.weight(.semibold))
-            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+            .foregroundStyle(isSelected ? Color.daytraceInk : .secondary)
         }
         .frame(minHeight: 44)
         .padding(.vertical, 6)
