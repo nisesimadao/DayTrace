@@ -80,6 +80,30 @@ struct TodayView: View {
         return alreadyRepresented ? nil : currentLocation
     }
 
+    private var mapCurrentLocation: CurrentLocationContext? {
+        guard let currentLocation = provisionalCurrentLocation else { return nil }
+        let bucketInterval: TimeInterval = 20
+        let bucketEnd = Date(
+            timeIntervalSinceReferenceDate: floor(currentLocation.lastEvidenceAt.timeIntervalSinceReferenceDate / bucketInterval) * bucketInterval
+        )
+        let evidence = todayRouteLocations.last { location in
+            location.timestamp <= bucketEnd
+                && location.timestamp >= currentLocation.startDate
+                && location.horizontalAccuracy >= 0
+                && location.horizontalAccuracy <= 1_000
+        }
+
+        guard let evidence else { return currentLocation }
+        return CurrentLocationContext(
+            startDate: currentLocation.startDate,
+            lastEvidenceAt: evidence.timestamp,
+            latitude: evidence.latitude,
+            longitude: evidence.longitude,
+            horizontalAccuracy: evidence.horizontalAccuracy,
+            timeZoneIdentifier: evidence.timeZoneIdentifier
+        )
+    }
+
     private var currentLocationName: String {
         guard let currentLocation = provisionalCurrentLocation else { return "現在地" }
         return CurrentLocationProjection.placeName(for: currentLocation, places: places) ?? "現在地"
@@ -125,7 +149,7 @@ struct TodayView: View {
                     DayMap(
                         episodes: todayEpisodes,
                         routeLocations: todayPreviewRouteLocations,
-                        currentLocation: provisionalCurrentLocation,
+                        currentLocation: mapCurrentLocation,
                         selectedEpisodeID: $selectedEpisodeID,
                         onExpand: showExpandedMap
                     )
@@ -176,8 +200,8 @@ struct TodayView: View {
             ExpandedDayMapView(
                 title: "今日の足あと",
                 episodes: todayEpisodes,
-                routeLocations: todayRouteLocations,
-                currentLocation: provisionalCurrentLocation,
+                routeLocations: todayPreviewRouteLocations,
+                currentLocation: mapCurrentLocation,
                 selectedEpisodeID: $selectedEpisodeID
             )
         }

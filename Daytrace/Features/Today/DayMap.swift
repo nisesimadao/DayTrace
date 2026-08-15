@@ -110,6 +110,8 @@ struct ExpandedDayMapView: View {
     let currentLocation: CurrentLocationContext?
     @Binding var selectedEpisodeID: UUID?
 
+    @State private var currentLocationFocusRequest = 0
+
     private var locatablePointCount: Int {
         episodes.count {
             $0.kind == .stay && $0.latitude != nil && $0.longitude != nil
@@ -124,15 +126,18 @@ struct ExpandedDayMapView: View {
                 currentLocation: currentLocation,
                 selectedEpisodeID: $selectedEpisodeID,
                 interactionModes: [.pan, .zoom],
-                routeOptions: .detail
+                routeOptions: .preview,
+                currentLocationFocusRequest: currentLocationFocusRequest
             )
             .ignoresSafeArea(edges: .bottom)
             .safeAreaInset(edge: .bottom) {
                 ExpandedMapTimelinePanel(
                     pointCount: locatablePointCount,
                     episodes: locatableEpisodes,
+                    currentLocation: currentLocation,
                     selectedEpisodeID: selectedEpisodeID,
-                    select: select
+                    select: select,
+                    focusCurrentLocation: focusCurrentLocation
                 )
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 8)
@@ -156,13 +161,20 @@ struct ExpandedDayMapView: View {
     private func select(_ episode: TimelineEpisode) {
         selectedEpisodeID = episode.id
     }
+
+    private func focusCurrentLocation() {
+        selectedEpisodeID = nil
+        currentLocationFocusRequest += 1
+    }
 }
 
 private struct ExpandedMapTimelinePanel: View {
     let pointCount: Int
     let episodes: [TimelineEpisode]
+    let currentLocation: CurrentLocationContext?
     let selectedEpisodeID: UUID?
     let select: (TimelineEpisode) -> Void
+    let focusCurrentLocation: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -172,15 +184,25 @@ private struct ExpandedMapTimelinePanel: View {
             )
             .font(.subheadline.weight(.semibold))
 
-            if episodes.isEmpty {
-                Text("タイムラインに地点が入ると、ここから地図を移動できます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    if let currentLocation {
+                        ExpandedMapCurrentLocationRow(
+                            currentLocation: currentLocation,
+                            index: episodes.count + 1,
+                            action: focusCurrentLocation
+                        )
+                    }
+
+                    if episodes.isEmpty {
+                        Text("タイムラインに地点が入ると、ここから地図を移動できます。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
+                    } else {
                         ForEach(Array(episodes.enumerated()), id: \.element.id) { index, episode in
-                            ExpandedMapTimelineChip(
+                            ExpandedMapTimelineRow(
                                 index: index + 1,
                                 episode: episode,
                                 isSelected: selectedEpisodeID == episode.id
@@ -189,10 +211,9 @@ private struct ExpandedMapTimelinePanel: View {
                             }
                         }
                     }
-                    .scrollTargetLayout()
                 }
-                .scrollTargetBehavior(.viewAligned)
             }
+            .frame(maxHeight: 260)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.cardPadding)
@@ -200,7 +221,49 @@ private struct ExpandedMapTimelinePanel: View {
     }
 }
 
-private struct ExpandedMapTimelineChip: View {
+private struct ExpandedMapCurrentLocationRow: View {
+    let currentLocation: CurrentLocationContext
+    let index: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                CurrentLocationMapMarker(index: index)
+                    .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("現在地")
+                        .font(.subheadline.weight(.semibold))
+
+                    Text("少なくとも \(TimelineFormatting.clock(currentLocation.startDate, timeZoneIdentifier: currentLocation.timeZoneIdentifier)) から")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("最後に確認 \(TimelineFormatting.clock(currentLocation.lastEvidenceAt, timeZoneIdentifier: currentLocation.timeZoneIdentifier))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "scope")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.tint)
+            }
+            .padding(12)
+            .background(Color.accentColor.opacity(0.12), in: .rect(cornerRadius: 18))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18)
+                    .strokeBorder(Color.accentColor.opacity(0.28), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("現在地へ移動")
+    }
+}
+
+private struct ExpandedMapTimelineRow: View {
     let index: Int
     let episode: TimelineEpisode
     let isSelected: Bool
@@ -220,23 +283,41 @@ private struct ExpandedMapTimelineChip: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
 
-                    Text(TimelineFormatting.clock(
-                        episode.startDate,
-                        timeZoneIdentifier: episode.timeZoneIdentifier
-                    ))
-                    .font(.caption.monospacedDigit())
+                    HStack(spacing: 6) {
+                        Text(TimelineFormatting.clock(
+                            episode.startDate,
+                            timeZoneIdentifier: episode.timeZoneIdentifier
+                        ))
+                        .font(.caption.monospacedDigit())
+
+                        if let duration = TimelineFormatting.duration(from: episode.startDate, to: episode.endDate) {
+                            Text(duration)
+                                .font(.caption)
+                        }
+                    }
                     .foregroundStyle(.secondary)
+
+                    if let subtitle = episode.subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
                 }
-                .frame(maxWidth: 154, alignment: .leading)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(12)
             .background(
                 isSelected ? Color.accentColor.opacity(0.14) : Color(.secondarySystemBackground).opacity(0.74),
-                in: .capsule
+                in: .rect(cornerRadius: 18)
             )
             .overlay {
-                Capsule()
+                RoundedRectangle(cornerRadius: 18)
                     .strokeBorder(isSelected ? Color.accentColor.opacity(0.48) : Color.primary.opacity(0.08), lineWidth: 1)
             }
         }
@@ -255,6 +336,7 @@ private struct DayMapCanvas: View {
     @Binding var selectedEpisodeID: UUID?
     let interactionModes: MapInteractionModes
     let routeOptions: DayRouteProjection.Options
+    var currentLocationFocusRequest: Int = 0
 
     @State private var position: MapCameraPosition = .automatic
 
@@ -348,6 +430,9 @@ private struct DayMapCanvas: View {
         .onChange(of: selectedEpisodeID) { _, selectedID in
             focusMap(on: selectedID)
         }
+        .onChange(of: currentLocationFocusRequest) { _, _ in
+            focusMapOnCurrentLocation()
+        }
         .sensoryFeedback(.selection, trigger: selectedEpisodeID)
     }
 
@@ -370,6 +455,24 @@ private struct DayMapCanvas: View {
             center: coordinate,
             latitudinalMeters: 900,
             longitudinalMeters: 900
+        )
+
+        withAnimation(reduceMotion ? nil : .snappy) {
+            position = .region(region)
+        }
+    }
+
+    private func focusMapOnCurrentLocation() {
+        guard let currentLocation else { return }
+
+        let coordinate = CLLocationCoordinate2D(
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude
+        )
+        let region = MKCoordinateRegion(
+            center: coordinate,
+            latitudinalMeters: 1_200,
+            longitudinalMeters: 1_200
         )
 
         withAnimation(reduceMotion ? nil : .snappy) {
