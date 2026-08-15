@@ -211,10 +211,34 @@ private struct MonthHeader: View {
     }
 
     private var monthTitle: some View {
-        Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
-            .font(.title2.bold())
-            .multilineTextAlignment(.center)
-            .contentTransition(.numericText())
+        VStack(spacing: 1) {
+            Image(systemName: "chevron.up")
+                .font(.caption.bold())
+                .foregroundStyle(.tertiary)
+            Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
+                .font(.title2.bold())
+                .multilineTextAlignment(.center)
+                .contentTransition(.numericText())
+            Image(systemName: "chevron.down")
+                .font(.caption.bold())
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .contentShape(Rectangle())
+        .highPriorityGesture(monthSwipeGesture)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
+        .accessibilityHint("上下にスワイプして月を変更できます")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment:
+                shiftMonth(1)
+            case .decrement:
+                shiftMonth(-1)
+            @unknown default:
+                break
+            }
+        }
     }
 
     private var previousMonthButton: some View {
@@ -234,6 +258,16 @@ private struct MonthHeader: View {
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
             setDisplayedMonth(shifted)
         }
+    }
+
+    private var monthSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 18)
+            .onEnded { value in
+                let horizontalDistance = abs(value.translation.width)
+                let verticalDistance = abs(value.translation.height)
+                guard verticalDistance > horizontalDistance, verticalDistance >= 24 else { return }
+                shiftMonth(value.translation.height < 0 ? 1 : -1)
+            }
     }
 }
 
