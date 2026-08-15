@@ -61,7 +61,8 @@ struct DayMap: View {
                     currentLocation: currentLocation,
                     selectedEpisodeID: $selectedEpisodeID,
                     interactionModes: onExpand == nil ? [.pan, .zoom] : [],
-                    routeOptions: .preview
+                    routeOptions: .preview,
+                    visualStyle: .compactCard
                 )
                 .equatable()
                 .allowsHitTesting(onExpand == nil)
@@ -73,9 +74,14 @@ struct DayMap: View {
 
                             Label("拡大", systemImage: "arrow.up.left.and.arrow.down.right")
                                 .font(.subheadline.bold())
+                                .foregroundStyle(Color.daytraceInk)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 9)
-                                .background(.regularMaterial, in: .capsule)
+                                .background(Color(.systemBackground).opacity(0.82), in: .capsule)
+                                .overlay {
+                                    Capsule()
+                                        .stroke(Color.daytraceInk.opacity(0.12), lineWidth: 1)
+                                }
                                 .padding(10)
                         }
                         .contentShape(Rectangle())
@@ -139,6 +145,7 @@ struct ExpandedDayMapView: View {
                 selectedEpisodeID: $selectedEpisodeID,
                 interactionModes: [.pan, .zoom],
                 routeOptions: .preview,
+                visualStyle: .expanded,
                 currentLocationFocusRequest: currentLocationFocusRequest
             )
             .equatable()
@@ -385,6 +392,7 @@ private struct DayMapCanvas: View, Equatable {
     @Binding var selectedEpisodeID: UUID?
     let interactionModes: MapInteractionModes
     let routeOptions: DayRouteProjection.Options
+    let visualStyle: DayMapVisualStyle
     var currentLocationFocusRequest: Int = 0
 
     @State private var position: MapCameraPosition = .automatic
@@ -396,6 +404,7 @@ private struct DayMapCanvas: View, Equatable {
         selectedEpisodeID: Binding<UUID?>,
         interactionModes: MapInteractionModes,
         routeOptions: DayRouteProjection.Options,
+        visualStyle: DayMapVisualStyle = .expanded,
         currentLocationFocusRequest: Int = 0
     ) {
         stayPoints = episodes
@@ -409,6 +418,7 @@ private struct DayMapCanvas: View, Equatable {
         _selectedEpisodeID = selectedEpisodeID
         self.interactionModes = interactionModes
         self.routeOptions = routeOptions
+        self.visualStyle = visualStyle
         self.currentLocationFocusRequest = currentLocationFocusRequest
     }
 
@@ -418,6 +428,7 @@ private struct DayMapCanvas: View, Equatable {
             && lhs.currentLocation == rhs.currentLocation
             && lhs.selectedEpisodeSnapshotID == rhs.selectedEpisodeSnapshotID
             && lhs.routeOptions == rhs.routeOptions
+            && lhs.visualStyle == rhs.visualStyle
             && lhs.currentLocationFocusRequest == rhs.currentLocationFocusRequest
     }
 
@@ -432,25 +443,25 @@ private struct DayMapCanvas: View, Equatable {
             if route.coordinates.count >= 2 {
                 MapPolyline(coordinates: route.coordinates, contourStyle: .straight)
                     .stroke(
-                        Color(.systemBackground).opacity(0.82),
-                        style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
+                        visualStyle.routeHaloColor,
+                        style: StrokeStyle(lineWidth: visualStyle.routeHaloWidth, lineCap: .round, lineJoin: .round)
                     )
 
                 MapPolyline(coordinates: route.coordinates, contourStyle: .straight)
                     .stroke(
-                        Color.primary.opacity(0.58),
-                        style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
+                        visualStyle.routeColor,
+                        style: StrokeStyle(lineWidth: visualStyle.routeWidth, lineCap: .round, lineJoin: .round)
                     )
             }
 
             ForEach(route.movementSamplePoints) { point in
                 Annotation("移動中の記録", coordinate: point.coordinate) {
                     Circle()
-                        .fill(Color.primary.opacity(0.46))
+                        .fill(visualStyle.movementSampleColor)
                         .frame(width: 7, height: 7)
                         .overlay {
                             Circle()
-                                .stroke(Color(.systemBackground).opacity(0.85), lineWidth: 1)
+                                .stroke(visualStyle.markerBackgroundColor.opacity(0.88), lineWidth: 1)
                         }
                         .accessibilityLabel("移動中の位置")
                 }
@@ -467,7 +478,8 @@ private struct DayMapCanvas: View, Equatable {
                         DayMapMarker(
                             index: index + 1,
                             isSelected: selectedEpisodeID == point.id,
-                            confidence: point.confidence
+                            confidence: point.confidence,
+                            visualStyle: visualStyle
                         )
                         .frame(width: 44, height: 44)
                         .contentShape(Circle())
@@ -482,7 +494,7 @@ private struct DayMapCanvas: View, Equatable {
                     "現在地",
                     coordinate: currentLocation.coordinate
                 ) {
-                    CurrentLocationMapMarker(index: stayPoints.count + 1)
+                    CurrentLocationMapMarker(index: stayPoints.count + 1, visualStyle: visualStyle)
                         .accessibilityLabel("\(stayPoints.count + 1)番目、現在地")
                 }
             }
@@ -674,6 +686,88 @@ private struct DayMapCanvas: View, Equatable {
     }
 }
 
+private enum DayMapVisualStyle: Equatable {
+    case compactCard
+    case expanded
+
+    var routeColor: Color {
+        switch self {
+        case .compactCard:
+            Color.daytraceInk.opacity(0.64)
+        case .expanded:
+            Color.primary.opacity(0.58)
+        }
+    }
+
+    var routeHaloColor: Color {
+        switch self {
+        case .compactCard:
+            Color(.systemBackground).opacity(0.90)
+        case .expanded:
+            Color(.systemBackground).opacity(0.82)
+        }
+    }
+
+    var routeWidth: CGFloat {
+        switch self {
+        case .compactCard: 2.6
+        case .expanded: 3
+        }
+    }
+
+    var routeHaloWidth: CGFloat {
+        switch self {
+        case .compactCard: 6
+        case .expanded: 7
+        }
+    }
+
+    var movementSampleColor: Color {
+        switch self {
+        case .compactCard:
+            Color.daytraceInk.opacity(0.42)
+        case .expanded:
+            Color.primary.opacity(0.46)
+        }
+    }
+
+    var markerForegroundColor: Color {
+        switch self {
+        case .compactCard:
+            Color.daytraceInk.opacity(0.76)
+        case .expanded:
+            Color.primary.opacity(0.72)
+        }
+    }
+
+    var selectedMarkerColor: Color {
+        switch self {
+        case .compactCard:
+            Color.daytraceInk
+        case .expanded:
+            Color.primary
+        }
+    }
+
+    var markerBackgroundColor: Color {
+        switch self {
+        case .compactCard:
+            Color(.secondarySystemGroupedBackground)
+        case .expanded:
+            Color(.systemBackground)
+        }
+    }
+
+    var currentLocationHaloColor: Color {
+        switch self {
+        case .compactCard:
+            Color.daytraceInk.opacity(0.09)
+        case .expanded:
+            Color.primary.opacity(0.10)
+        }
+    }
+}
+
 private struct DayMapStayPoint: Identifiable, Equatable {
     let id: UUID
     let title: String
@@ -759,29 +853,30 @@ private struct DayRouteSnapshot {
 
 private struct CurrentLocationMapMarker: View {
     let index: Int
+    let visualStyle: DayMapVisualStyle
 
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color.primary.opacity(0.10))
+                .fill(visualStyle.currentLocationHaloColor)
                 .frame(width: 40, height: 40)
 
             Circle()
-                .fill(Color(.systemBackground))
+                .fill(visualStyle.markerBackgroundColor)
                 .frame(width: 29, height: 29)
                 .shadow(radius: 3, y: 1)
 
             Text(index, format: .number)
                 .font(.caption.bold())
-                .foregroundStyle(.primary)
+                .foregroundStyle(visualStyle.selectedMarkerColor)
         }
         .frame(width: 44, height: 44)
         .overlay(alignment: .topTrailing) {
             Circle()
-                .fill(Color.primary.opacity(0.78))
+                .fill(visualStyle.selectedMarkerColor.opacity(0.78))
                 .frame(width: 9, height: 9)
                 .overlay {
-                    Circle().stroke(Color(.systemBackground), lineWidth: 2)
+                    Circle().stroke(visualStyle.markerBackgroundColor, lineWidth: 2)
                 }
         }
     }
@@ -791,19 +886,20 @@ private struct DayMapMarker: View {
     let index: Int
     let isSelected: Bool
     let confidence: EpisodeConfidence
+    let visualStyle: DayMapVisualStyle
 
     private var outerSize: CGFloat { isSelected ? 36 : 31 }
     private var foregroundStyle: Color {
         if isSelected {
-            return Color.primary
+            return visualStyle.selectedMarkerColor
         }
-        return confidence == .low ? Color.secondary : Color.primary.opacity(0.72)
+        return confidence == .low ? Color.secondary : visualStyle.markerForegroundColor
     }
 
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color(.systemBackground))
+                .fill(visualStyle.markerBackgroundColor)
                 .frame(width: outerSize, height: outerSize)
                 .shadow(radius: 3, y: 1)
 
