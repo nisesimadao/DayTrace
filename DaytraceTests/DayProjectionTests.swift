@@ -884,6 +884,45 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testDayRouteProjectionThinsClusteredMovingSamples() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let secondStay = timelineStay(
+            start: baseTime.addingTimeInterval(120 * 60),
+            end: baseTime.addingTimeInterval(150 * 60),
+            latitude: 34.700,
+            longitude: 133.960
+        )
+        let clusteredSample = locationEvidence(
+            at: baseTime.addingTimeInterval(75 * 60),
+            latitude: 34.661,
+            longitude: 133.921,
+            speed: 8,
+            source: .standardLocation
+        )
+        let distantSample = locationEvidence(
+            at: baseTime.addingTimeInterval(90 * 60),
+            latitude: 34.680,
+            longitude: 133.940,
+            speed: 12,
+            source: .standardLocation
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [firstStay, secondStay],
+            locationEvidence: [clusteredSample, distantSample],
+            options: .preview
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .movementSample, .stay])
+        XCTAssertEqual(points.map(\.latitude), [34.660, 34.680, 34.700])
+    }
+
+    @MainActor
     func testPreviewRouteKeepsCurrentLocationConnection() throws {
         let firstStay = timelineStay(
             start: baseTime,

@@ -29,14 +29,8 @@ struct DayMap: View {
     }
 
     private var routeDescription: String {
-        let sampleCount = DayRouteProjection.movementSampleCount(
-            episodes: episodes,
-            locationEvidence: routeLocations,
-            currentLocation: currentLocation,
-            options: .preview
-        )
-        if sampleCount > 0 {
-            return "移動中\(sampleCount)点を含む"
+        if !routeLocations.isEmpty {
+            return "移動中の記録を間引いて表示"
         }
         if pointCount >= 2 {
             return "\(pointCount)地点を時系列の直線で表示"
@@ -69,6 +63,7 @@ struct DayMap: View {
                     interactionModes: onExpand == nil ? [.pan, .zoom] : [],
                     routeOptions: .preview
                 )
+                .equatable()
                 .allowsHitTesting(onExpand == nil)
 
                 if let onExpand {
@@ -146,6 +141,7 @@ struct ExpandedDayMapView: View {
                 routeOptions: .preview,
                 currentLocationFocusRequest: currentLocationFocusRequest
             )
+            .equatable()
             .ignoresSafeArea(edges: .bottom)
             .safeAreaInset(edge: .bottom) {
                 ExpandedMapTimelinePanel(
@@ -308,6 +304,7 @@ private struct ExpandedMapCurrentLocationRow: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .tint(.primary)
                 }
             }
         }
@@ -328,7 +325,7 @@ private struct ExpandedMapTimelineRow: View {
             HStack(alignment: .top, spacing: 12) {
                 Text(index, format: .number)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
                     .frame(width: 28, height: 28)
                     .background(Color(.tertiarySystemGroupedBackground), in: .circle)
 
@@ -370,7 +367,7 @@ private struct ExpandedMapTimelineRow: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 11)
-            .background(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
+            .background(isSelected ? Color.primary.opacity(0.06) : Color.clear)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(index)番目、\(episode.title)へ移動")
@@ -378,12 +375,13 @@ private struct ExpandedMapTimelineRow: View {
     }
 }
 
-private struct DayMapCanvas: View {
+private struct DayMapCanvas: View, Equatable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    let episodes: [TimelineEpisode]
-    let routeLocations: [LocationEvidence]
-    let currentLocation: CurrentLocationContext?
+    let stayPoints: [DayMapStayPoint]
+    let routeLocations: [DayMapRouteLocation]
+    let currentLocation: DayMapCurrentLocation?
+    let selectedEpisodeSnapshotID: UUID?
     @Binding var selectedEpisodeID: UUID?
     let interactionModes: MapInteractionModes
     let routeOptions: DayRouteProjection.Options
@@ -391,20 +389,40 @@ private struct DayMapCanvas: View {
 
     @State private var position: MapCameraPosition = .automatic
 
-    private var locatableEpisodes: [TimelineEpisode] {
-        episodes
-            .filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
+    init(
+        episodes: [TimelineEpisode],
+        routeLocations: [LocationEvidence],
+        currentLocation: CurrentLocationContext?,
+        selectedEpisodeID: Binding<UUID?>,
+        interactionModes: MapInteractionModes,
+        routeOptions: DayRouteProjection.Options,
+        currentLocationFocusRequest: Int = 0
+    ) {
+        stayPoints = episodes
+            .compactMap(DayMapStayPoint.init)
             .sorted { $0.startDate < $1.startDate }
+        self.routeLocations = routeLocations
+            .map(DayMapRouteLocation.init)
+            .sorted { $0.timestamp < $1.timestamp }
+        self.currentLocation = currentLocation.map(DayMapCurrentLocation.init)
+        selectedEpisodeSnapshotID = selectedEpisodeID.wrappedValue
+        _selectedEpisodeID = selectedEpisodeID
+        self.interactionModes = interactionModes
+        self.routeOptions = routeOptions
+        self.currentLocationFocusRequest = currentLocationFocusRequest
+    }
+
+    nonisolated static func == (lhs: DayMapCanvas, rhs: DayMapCanvas) -> Bool {
+        lhs.stayPoints == rhs.stayPoints
+            && lhs.routeLocations == rhs.routeLocations
+            && lhs.currentLocation == rhs.currentLocation
+            && lhs.selectedEpisodeSnapshotID == rhs.selectedEpisodeSnapshotID
+            && lhs.routeOptions == rhs.routeOptions
+            && lhs.currentLocationFocusRequest == rhs.currentLocationFocusRequest
     }
 
     private var routeSnapshot: DayRouteSnapshot {
-        let routePoints = DayRouteProjection.points(
-            episodes: episodes,
-            locationEvidence: routeLocations,
-            currentLocation: currentLocation,
-            options: routeOptions
-        )
-        return DayRouteSnapshot(points: routePoints)
+        DayRouteSnapshot(points: routePoints())
     }
 
     var body: some View {
@@ -420,7 +438,7 @@ private struct DayMapCanvas: View {
 
                 MapPolyline(coordinates: route.coordinates, contourStyle: .straight)
                     .stroke(
-                        Color.accentColor.opacity(0.72),
+                        Color.primary.opacity(0.58),
                         style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
                     )
             }
@@ -428,7 +446,7 @@ private struct DayMapCanvas: View {
             ForEach(route.movementSamplePoints) { point in
                 Annotation("移動中の記録", coordinate: point.coordinate) {
                     Circle()
-                        .fill(Color.accentColor.opacity(0.58))
+                        .fill(Color.primary.opacity(0.46))
                         .frame(width: 7, height: 7)
                         .overlay {
                             Circle()
@@ -438,39 +456,34 @@ private struct DayMapCanvas: View {
                 }
             }
 
-            ForEach(Array(locatableEpisodes.enumerated()), id: \.element.id) { index, episode in
-                if let latitude = episode.latitude, let longitude = episode.longitude {
-                    Annotation(
-                        episode.title,
-                        coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-                    ) {
-                        Button {
-                            select(episode)
-                        } label: {
-                            DayMapMarker(
-                                index: index + 1,
-                                isSelected: selectedEpisodeID == episode.id,
-                                confidence: episode.confidence
-                            )
-                            .frame(width: 44, height: 44)
-                            .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(index + 1)番目、\(episode.title)を選択")
+            ForEach(Array(stayPoints.enumerated()), id: \.element.id) { index, point in
+                Annotation(
+                    point.title,
+                    coordinate: point.coordinate
+                ) {
+                    Button {
+                        select(point)
+                    } label: {
+                        DayMapMarker(
+                            index: index + 1,
+                            isSelected: selectedEpisodeID == point.id,
+                            confidence: point.confidence
+                        )
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(index + 1)番目、\(point.title)を選択")
                 }
             }
 
             if let currentLocation {
                 Annotation(
                     "現在地",
-                    coordinate: CLLocationCoordinate2D(
-                        latitude: currentLocation.latitude,
-                        longitude: currentLocation.longitude
-                    )
+                    coordinate: currentLocation.coordinate
                 ) {
-                    CurrentLocationMapMarker(index: locatableEpisodes.count + 1)
-                        .accessibilityLabel("\(locatableEpisodes.count + 1)番目、現在地")
+                    CurrentLocationMapMarker(index: stayPoints.count + 1)
+                        .accessibilityLabel("\(stayPoints.count + 1)番目、現在地")
                 }
             }
         }
@@ -487,23 +500,156 @@ private struct DayMapCanvas: View {
         .sensoryFeedback(.selection, trigger: selectedEpisodeID)
     }
 
-    private func select(_ episode: TimelineEpisode) {
+    private func routePoints() -> [DayRoutePoint] {
+        guard let firstStay = stayPoints.first else {
+            guard let currentLocation else { return [] }
+            return [point(for: currentLocation)]
+        }
+
+        let usableSamples = routeLocations.filter {
+            $0.horizontalAccuracy >= 0
+                && $0.horizontalAccuracy <= 1_000
+                && ($0.source == .standardLocation || $0.source == .significantChange)
+        }
+
+        var points: [DayRoutePoint] = [point(for: firstStay)]
+
+        for pair in zip(stayPoints, stayPoints.dropFirst()) {
+            if let departure = pair.0.endDate {
+                points.append(contentsOf: routeSamples(
+                    from: usableSamples,
+                    start: departure,
+                    end: pair.1.startDate
+                ))
+            }
+            points.append(point(for: pair.1))
+        }
+
+        if let currentLocation, routeOptions.includesCurrentLocationInRoute {
+            let lastStay = stayPoints[stayPoints.count - 1]
+            let routeStart = lastStay.endDate ?? lastStay.startDate
+            points.append(contentsOf: routeSamples(
+                from: usableSamples,
+                start: routeStart,
+                end: currentLocation.lastEvidenceAt
+            ))
+            points.append(point(for: currentLocation))
+        }
+
+        return removeAdjacentDuplicates(points)
+    }
+
+    private func routeSamples(
+        from evidence: [DayMapRouteLocation],
+        start: Date,
+        end: Date
+    ) -> [DayRoutePoint] {
+        guard end > start else { return [] }
+        let samples = evidence.filter { $0.timestamp > start && $0.timestamp < end }
+        let thinnedSamples = thin(samples)
+        let decimatedSamples = decimate(thinnedSamples, maximumCount: routeOptions.maximumSamplesPerSegment)
+        return decimatedSamples.map { sample in
+            DayRoutePoint(
+                id: "sample-\(sample.id.uuidString)",
+                kind: .movementSample,
+                timestamp: sample.timestamp,
+                latitude: sample.latitude,
+                longitude: sample.longitude
+            )
+        }
+    }
+
+    private func thin(_ samples: [DayMapRouteLocation]) -> [DayMapRouteLocation] {
+        guard let first = samples.first else { return [] }
+
+        var thinned = [first]
+        var lastAccepted = first
+
+        for sample in samples.dropFirst() {
+            let elapsed = sample.timestamp.timeIntervalSince(lastAccepted.timestamp)
+            let distance = sample.location.distance(from: lastAccepted.location)
+            guard elapsed >= routeOptions.minimumSampleInterval
+                    && distance >= routeOptions.minimumSampleDistance else {
+                continue
+            }
+            thinned.append(sample)
+            lastAccepted = sample
+        }
+
+        if let last = samples.last, thinned.last?.id != last.id {
+            let distance = last.location.distance(from: thinned.last?.location ?? first.location)
+            if distance >= routeOptions.minimumSampleDistance {
+                thinned.append(last)
+            }
+        }
+
+        return thinned
+    }
+
+    private func decimate(
+        _ samples: [DayMapRouteLocation],
+        maximumCount: Int
+    ) -> [DayMapRouteLocation] {
+        guard samples.count > maximumCount, maximumCount > 1 else { return samples }
+        let stride = Double(samples.count - 1) / Double(maximumCount - 1)
+        return (0..<maximumCount).map { index in
+            samples[Int((Double(index) * stride).rounded())]
+        }
+    }
+
+    private func point(for stay: DayMapStayPoint) -> DayRoutePoint {
+        DayRoutePoint(
+            id: "stay-\(stay.id.uuidString)",
+            kind: .stay,
+            timestamp: stay.startDate,
+            latitude: stay.latitude,
+            longitude: stay.longitude
+        )
+    }
+
+    private func point(for currentLocation: DayMapCurrentLocation) -> DayRoutePoint {
+        DayRoutePoint(
+            id: "current-\(currentLocation.lastEvidenceAt.timeIntervalSinceReferenceDate)",
+            kind: .currentLocation,
+            timestamp: currentLocation.lastEvidenceAt,
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude
+        )
+    }
+
+    private func removeAdjacentDuplicates(_ points: [DayRoutePoint]) -> [DayRoutePoint] {
+        var deduplicated: [DayRoutePoint] = []
+
+        for point in points {
+            guard let previous = deduplicated.last else {
+                deduplicated.append(point)
+                continue
+            }
+
+            let previousLocation = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
+            let pointLocation = CLLocation(latitude: point.latitude, longitude: point.longitude)
+            if previousLocation.distance(from: pointLocation) >= 5 {
+                deduplicated.append(point)
+            }
+        }
+
+        return deduplicated
+    }
+
+    private func select(_ point: DayMapStayPoint) {
         withAnimation(reduceMotion ? nil : .snappy) {
-            selectedEpisodeID = episode.id
+            selectedEpisodeID = point.id
         }
     }
 
     private func focusMap(on episodeID: UUID?) {
         guard let episodeID,
-              let episode = locatableEpisodes.first(where: { $0.id == episodeID }),
-              let latitude = episode.latitude,
-              let longitude = episode.longitude else {
+              let point = stayPoints.first(where: { $0.id == episodeID }) else {
             return
         }
 
-        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         let region = MKCoordinateRegion(
-            center: coordinate,
+            center: point.coordinate,
             latitudinalMeters: 900,
             longitudinalMeters: 900
         )
@@ -516,12 +662,8 @@ private struct DayMapCanvas: View {
     private func focusMapOnCurrentLocation() {
         guard let currentLocation else { return }
 
-        let coordinate = CLLocationCoordinate2D(
-            latitude: currentLocation.latitude,
-            longitude: currentLocation.longitude
-        )
         let region = MKCoordinateRegion(
-            center: coordinate,
+            center: currentLocation.coordinate,
             latitudinalMeters: 1_200,
             longitudinalMeters: 1_200
         )
@@ -529,6 +671,79 @@ private struct DayMapCanvas: View {
         withAnimation(reduceMotion ? nil : .snappy) {
             position = .region(region)
         }
+    }
+}
+
+private struct DayMapStayPoint: Identifiable, Equatable {
+    let id: UUID
+    let title: String
+    let startDate: Date
+    let endDate: Date?
+    let latitude: Double
+    let longitude: Double
+    let confidence: EpisodeConfidence
+
+    init?(_ episode: TimelineEpisode) {
+        guard episode.kind == .stay,
+              let latitude = episode.latitude,
+              let longitude = episode.longitude else {
+            return nil
+        }
+        id = episode.id
+        title = episode.title
+        startDate = episode.startDate
+        endDate = episode.endDate
+        self.latitude = latitude
+        self.longitude = longitude
+        confidence = episode.confidence
+    }
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
+private struct DayMapRouteLocation: Identifiable, Equatable {
+    let id: UUID
+    let timestamp: Date
+    let latitude: Double
+    let longitude: Double
+    let horizontalAccuracy: Double
+    let source: EvidenceSource
+
+    init(_ evidence: LocationEvidence) {
+        id = evidence.id
+        timestamp = evidence.timestamp
+        latitude = evidence.latitude
+        longitude = evidence.longitude
+        horizontalAccuracy = evidence.horizontalAccuracy
+        source = evidence.source
+    }
+
+    var location: CLLocation {
+        CLLocation(latitude: latitude, longitude: longitude)
+    }
+}
+
+private struct DayMapCurrentLocation: Equatable {
+    let startDate: Date
+    let lastEvidenceAt: Date
+    let latitude: Double
+    let longitude: Double
+    let horizontalAccuracy: Double
+    let timeZoneIdentifier: String
+
+    init(_ currentLocation: CurrentLocationContext) {
+        startDate = currentLocation.startDate
+        lastEvidenceAt = currentLocation.lastEvidenceAt
+        latitude = currentLocation.latitude
+        longitude = currentLocation.longitude
+        horizontalAccuracy = currentLocation.horizontalAccuracy
+        timeZoneIdentifier = currentLocation.timeZoneIdentifier
+    }
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 }
 
@@ -548,7 +763,7 @@ private struct CurrentLocationMapMarker: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(.tint.opacity(0.18))
+                .fill(Color.primary.opacity(0.10))
                 .frame(width: 40, height: 40)
 
             Circle()
@@ -558,12 +773,12 @@ private struct CurrentLocationMapMarker: View {
 
             Text(index, format: .number)
                 .font(.caption.bold())
-                .foregroundStyle(.tint)
+                .foregroundStyle(.primary)
         }
         .frame(width: 44, height: 44)
         .overlay(alignment: .topTrailing) {
             Circle()
-                .fill(.tint)
+                .fill(Color.primary.opacity(0.78))
                 .frame(width: 9, height: 9)
                 .overlay {
                     Circle().stroke(Color(.systemBackground), lineWidth: 2)
@@ -579,7 +794,10 @@ private struct DayMapMarker: View {
 
     private var outerSize: CGFloat { isSelected ? 36 : 31 }
     private var foregroundStyle: Color {
-        confidence == .low ? .secondary : .accentColor
+        if isSelected {
+            return Color.primary
+        }
+        return confidence == .low ? Color.secondary : Color.primary.opacity(0.72)
     }
 
     var body: some View {

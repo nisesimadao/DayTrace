@@ -29,15 +29,15 @@ enum DayRouteProjection {
 
         static let preview = Options(
             maximumSamplesPerSegment: 28,
-            minimumSampleInterval: 20,
-            minimumSampleDistance: 180,
+            minimumSampleInterval: 25,
+            minimumSampleDistance: 260,
             includesCurrentLocationInRoute: true
         )
 
         static let detail = Options(
             maximumSamplesPerSegment: 120,
-            minimumSampleInterval: 5,
-            minimumSampleDistance: 45,
+            minimumSampleInterval: 10,
+            minimumSampleDistance: 90,
             includesCurrentLocationInRoute: true
         )
     }
@@ -152,7 +152,7 @@ enum DayRouteProjection {
             let distance = CLLocation(latitude: sample.latitude, longitude: sample.longitude).distance(
                 from: CLLocation(latitude: lastAccepted.latitude, longitude: lastAccepted.longitude)
             )
-            guard elapsed >= minimumInterval || distance >= minimumDistance else {
+            guard elapsed >= minimumInterval && distance >= minimumDistance else {
                 continue
             }
             thinned.append(sample)
@@ -160,7 +160,15 @@ enum DayRouteProjection {
         }
 
         if let last = samples.last, thinned.last?.id != last.id {
-            thinned.append(last)
+            let distance = CLLocation(latitude: last.latitude, longitude: last.longitude).distance(
+                from: CLLocation(
+                    latitude: thinned.last?.latitude ?? first.latitude,
+                    longitude: thinned.last?.longitude ?? first.longitude
+                )
+            )
+            if distance >= minimumDistance {
+                thinned.append(last)
+            }
         }
 
         return thinned
