@@ -60,33 +60,33 @@ struct DayMap: View {
                     routeLocations: routeLocations,
                     currentLocation: currentLocation,
                     selectedEpisodeID: $selectedEpisodeID,
-                    interactionModes: onExpand == nil ? [.pan, .zoom] : [],
+                    interactionModes: [.pan, .zoom],
                     routeOptions: .preview,
                     visualStyle: .compactCard
                 )
                 .equatable()
-                .allowsHitTesting(onExpand == nil)
+                .simultaneousGesture(
+                    TapGesture(count: 1).onEnded {
+                        onExpand?()
+                    }
+                )
 
                 if let onExpand {
                     Button(action: onExpand) {
-                        ZStack(alignment: .bottomTrailing) {
-                            Color.clear
-
-                            Label("拡大", systemImage: "arrow.up.left.and.arrow.down.right")
-                                .font(.subheadline.bold())
-                                .foregroundStyle(Color.daytraceInk)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 9)
-                                .background(Color(.systemBackground).opacity(0.82), in: .capsule)
-                                .overlay {
-                                    Capsule()
-                                        .stroke(Color.daytraceInk.opacity(0.12), lineWidth: 1)
-                                }
-                                .padding(10)
-                        }
-                        .contentShape(Rectangle())
+                        Label("拡大", systemImage: "arrow.up.left.and.arrow.down.right")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(Color.daytraceInk)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .background(.regularMaterial, in: .capsule)
+                            .overlay {
+                                Capsule()
+                                    .stroke(Color.daytraceInk.opacity(0.16), lineWidth: 1)
+                            }
+                            .contentShape(.capsule)
                     }
                     .buttonStyle(.plain)
+                    .padding(10)
                     .accessibilityLabel("足あとマップを拡大")
                     .accessibilityHint("全画面の地図で地点と移動順を確認します")
                 }
@@ -250,11 +250,17 @@ private struct ExpandedMapTimelinePanel: View {
                 }
             }
             .frame(maxHeight: 260)
-            .background(Color(.secondarySystemGroupedBackground).opacity(0.72), in: .rect(cornerRadius: 18))
+            .scrollContentBackground(.hidden)
+            .background(.thinMaterial, in: .rect(cornerRadius: 18))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .daytraceGlassSurface()
+        .daytraceGlassSurface(tint: Color(.systemBackground).opacity(0.18))
     }
 }
 
@@ -374,7 +380,7 @@ private struct ExpandedMapTimelineRow: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 11)
-            .background(isSelected ? Color.primary.opacity(0.06) : Color.clear)
+            .background(isSelected ? Color.primary.opacity(0.045) : Color.clear, in: .rect(cornerRadius: 14))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(index)番目、\(episode.title)へ移動")
@@ -396,6 +402,7 @@ private struct DayMapCanvas: View, Equatable {
     var currentLocationFocusRequest: Int = 0
 
     @State private var position: MapCameraPosition = .automatic
+    @State private var hasInitializedCamera = false
 
     init(
         episodes: [TimelineEpisode],
@@ -483,6 +490,7 @@ private struct DayMapCanvas: View, Equatable {
                         )
                         .frame(width: 44, height: 44)
                         .contentShape(Circle())
+                        .zIndex(selectedEpisodeID == point.id ? 2_000 : 1_000 + Double(index))
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(index + 1)番目、\(point.title)を選択")
@@ -495,6 +503,7 @@ private struct DayMapCanvas: View, Equatable {
                     coordinate: currentLocation.coordinate
                 ) {
                     CurrentLocationMapMarker(index: stayPoints.count + 1, visualStyle: visualStyle)
+                        .zIndex(3_000)
                         .accessibilityLabel("\(stayPoints.count + 1)番目、現在地")
                 }
             }
@@ -503,6 +512,18 @@ private struct DayMapCanvas: View, Equatable {
         .transaction { transaction in
             transaction.animation = nil
         }
+        .onAppear {
+            initializeCameraIfNeeded()
+        }
+        .onChange(of: stayPoints) { _, _ in
+            initializeCameraIfNeeded()
+        }
+        .onChange(of: routeLocations) { _, _ in
+            initializeCameraIfNeeded()
+        }
+        .onChange(of: currentLocation) { _, _ in
+            initializeCameraIfNeeded()
+        }
         .onChange(of: selectedEpisodeID) { _, selectedID in
             focusMap(on: selectedID)
         }
@@ -510,6 +531,55 @@ private struct DayMapCanvas: View, Equatable {
             focusMapOnCurrentLocation()
         }
         .sensoryFeedback(.selection, trigger: selectedEpisodeID)
+    }
+
+    private func initializeCameraIfNeeded() {
+        guard !hasInitializedCamera else { return }
+        let route = routeSnapshot
+        var coordinates = route.coordinates + stayPoints.map(\.coordinate)
+        if let currentLocation {
+            coordinates.append(currentLocation.coordinate)
+        }
+        guard let region = regionFitting(coordinates: coordinates) else { return }
+        position = .region(region)
+        hasInitializedCamera = true
+    }
+
+    private func regionFitting(coordinates: [CLLocationCoordinate2D]) -> MKCoordinateRegion? {
+        let validCoordinates = coordinates.filter {
+            CLLocationCoordinate2DIsValid($0)
+        }
+        guard let first = validCoordinates.first else { return nil }
+        guard validCoordinates.count > 1 else {
+            return MKCoordinateRegion(
+                center: first,
+                latitudinalMeters: visualStyle.singlePointCameraMeters,
+                longitudinalMeters: visualStyle.singlePointCameraMeters
+            )
+        }
+
+        let minLatitude = validCoordinates.map(\.latitude).min() ?? first.latitude
+        let maxLatitude = validCoordinates.map(\.latitude).max() ?? first.latitude
+        let minLongitude = validCoordinates.map(\.longitude).min() ?? first.longitude
+        let maxLongitude = validCoordinates.map(\.longitude).max() ?? first.longitude
+        let center = CLLocationCoordinate2D(
+            latitude: (minLatitude + maxLatitude) / 2,
+            longitude: (minLongitude + maxLongitude) / 2
+        )
+
+        let latitudeMeters = max((maxLatitude - minLatitude) * 111_000, visualStyle.minimumCameraMeters)
+        let longitudeMeters = max(
+            (maxLongitude - minLongitude) * 111_000 * max(cos(center.latitude * .pi / 180), 0.25),
+            visualStyle.minimumCameraMeters
+        )
+        let paddedLatitudeMeters = min(latitudeMeters * visualStyle.cameraPaddingMultiplier, 80_000)
+        let paddedLongitudeMeters = min(longitudeMeters * visualStyle.cameraPaddingMultiplier, 80_000)
+
+        return MKCoordinateRegion(
+            center: center,
+            latitudinalMeters: paddedLatitudeMeters,
+            longitudinalMeters: paddedLongitudeMeters
+        )
     }
 
     private func routePoints() -> [DayRoutePoint] {
@@ -764,6 +834,27 @@ private enum DayMapVisualStyle: Equatable {
             Color.daytraceInk.opacity(0.09)
         case .expanded:
             Color.primary.opacity(0.10)
+        }
+    }
+
+    var singlePointCameraMeters: CLLocationDistance {
+        switch self {
+        case .compactCard: 2_600
+        case .expanded: 1_400
+        }
+    }
+
+    var minimumCameraMeters: CLLocationDistance {
+        switch self {
+        case .compactCard: 1_800
+        case .expanded: 900
+        }
+    }
+
+    var cameraPaddingMultiplier: Double {
+        switch self {
+        case .compactCard: 1.9
+        case .expanded: 1.45
         }
     }
 }

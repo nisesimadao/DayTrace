@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum DS {
     static let horizontalPadding: CGFloat = 20
@@ -14,7 +15,11 @@ enum DS {
 }
 
 extension Color {
-    static let daytraceInk = Color(red: 0.035, green: 0.122, blue: 0.263)
+    static let daytraceInk = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.80, green: 0.86, blue: 0.94, alpha: 1)
+            : UIColor(red: 0.035, green: 0.122, blue: 0.263, alpha: 1)
+    })
     static let daytraceCoral = Color(red: 1.000, green: 0.604, blue: 0.455)
     static let daytraceCoralSoft = Color(red: 1.000, green: 0.788, blue: 0.702)
     static let daytraceSeafoam = Color(red: 0.388, green: 0.792, blue: 0.706)
