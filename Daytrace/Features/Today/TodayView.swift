@@ -55,11 +55,12 @@ struct TodayView: View {
             .filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
             .sorted { $0.startDate < $1.startDate }
 
-        guard stays.count >= 2, let latestCompletedRouteEnd = stays.last?.startDate else {
+        guard !stays.isEmpty else {
             return []
         }
 
-        return todayRouteLocations.filter { $0.timestamp < latestCompletedRouteEnd }
+        let routeEnd = provisionalCurrentLocation?.lastEvidenceAt ?? stays.last?.startDate ?? day.end
+        return todayRouteLocations.filter { $0.timestamp < routeEnd }
     }
 
     private var currentLocation: CurrentLocationContext? {
@@ -76,7 +77,7 @@ struct TodayView: View {
 
     private var mapCurrentLocation: CurrentLocationContext? {
         guard let currentLocation = provisionalCurrentLocation else { return nil }
-        let bucketInterval: TimeInterval = 20
+        let bucketInterval: TimeInterval = 60
         let bucketEnd = Date(
             timeIntervalSinceReferenceDate: floor(currentLocation.lastEvidenceAt.timeIntervalSinceReferenceDate / bucketInterval) * bucketInterval
         )
@@ -101,6 +102,37 @@ struct TodayView: View {
     private var currentLocationName: String {
         guard let currentLocation = provisionalCurrentLocation else { return "現在地" }
         return CurrentLocationProjection.placeName(for: currentLocation, places: places) ?? "現在地"
+    }
+
+    private var currentLocationTransition: CurrentLocationTransitionContext? {
+        guard let currentLocation = provisionalCurrentLocation,
+              let lastStay = todayEpisodes
+                .filter({ $0.kind == .stay && $0.latitude != nil && $0.longitude != nil })
+                .sorted(by: { $0.startDate < $1.startDate })
+                .last else {
+            return nil
+        }
+
+        let routeStart = lastStay.endDate ?? lastStay.startDate
+        guard currentLocation.lastEvidenceAt.timeIntervalSince(routeStart) >= 60 else { return nil }
+        let movementSamples = todayRouteLocations
+            .filter {
+                $0.timestamp > routeStart
+                    && $0.timestamp <= currentLocation.lastEvidenceAt
+                    && $0.horizontalAccuracy >= 0
+                    && $0.horizontalAccuracy <= 1_000
+                    && ($0.source == .standardLocation || $0.source == .significantChange)
+            }
+            .sorted { $0.timestamp < $1.timestamp }
+
+        let startDate = movementSamples.first?.timestamp ?? routeStart
+        guard currentLocation.lastEvidenceAt.timeIntervalSince(startDate) >= 60 else { return nil }
+        return CurrentLocationTransitionContext(
+            kind: movementSamples.isEmpty ? .gap : .move,
+            startDate: startDate,
+            endDate: currentLocation.lastEvidenceAt,
+            timeZoneIdentifier: currentLocation.timeZoneIdentifier
+        )
     }
 
     private var hasMapContent: Bool {
@@ -166,6 +198,11 @@ struct TodayView: View {
                     )
                 }
 
+                if let currentLocationTransition {
+                    CurrentLocationTransitionRow(transition: currentLocationTransition)
+                        .transition(.opacity)
+                }
+
                 if let provisionalCurrentLocation {
                     CurrentLocationTimelineRow(
                         currentLocation: provisionalCurrentLocation,
@@ -213,8 +250,11 @@ struct TodayView: View {
             try? TimelineEngine().rebuildRecentTimeline(in: modelContext)
             await AutomaticPlaceSuggestionService.annotateUnresolvedRecentStays(in: modelContext)
         }
-        .onChange(of: recorder.lastEvidenceAt) { _, _ in
-            refreshLocationSnapshot(force: false)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(TodayLocationSnapshot.refreshInterval))
+                refreshLocationSnapshot(force: false)
+            }
         }
         .safeAreaInset(edge: .bottom) {
             if let episodeID = undoSuppressedEpisodeID {
@@ -400,7 +440,7 @@ struct TodayView: View {
 @MainActor
 private struct TodayLocationSnapshot {
     static let empty = TodayLocationSnapshot(routeLocations: [], currentLocation: nil)
-    static let refreshInterval: TimeInterval = 20
+    static let refreshInterval: TimeInterval = 45
     private static let minimumRouteInterval: TimeInterval = 10
     private static let minimumRouteDistance: CLLocationDistance = 80
     private static let maximumUsableAccuracy: CLLocationAccuracy = 1_000

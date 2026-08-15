@@ -297,6 +297,76 @@ struct CurrentLocationTimelineRow: View {
     }
 }
 
+struct CurrentLocationTransitionContext: Equatable {
+    let kind: EpisodeKind
+    let startDate: Date
+    let endDate: Date
+    let timeZoneIdentifier: String
+}
+
+struct CurrentLocationTransitionRow: View {
+    let transition: CurrentLocationTransitionContext
+
+    private var title: String {
+        transition.kind == .move ? "移動中" : "記録のない区間"
+    }
+
+    private var subtitle: String? {
+        transition.kind == .gap ? "この間の位置情報を確認できませんでした" : nil
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 13) {
+            Text(TimelineFormatting.clock(
+                transition.startDate,
+                timeZoneIdentifier: transition.timeZoneIdentifier
+            ))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .frame(width: 43, alignment: .trailing)
+            .padding(.top, 1)
+
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.22))
+                    .frame(width: DS.timelineLine, height: 8)
+
+                Image(systemName: transition.kind == .move ? "arrow.down" : "ellipsis")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                    .frame(width: DS.timelineDot, height: DS.timelineDot)
+
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.22))
+                    .frame(width: DS.timelineLine)
+            }
+            .frame(width: 20)
+            .frame(minHeight: 52)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let duration = TimelineFormatting.duration(from: transition.startDate, to: transition.endDate) {
+                    Text(duration)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 20)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title)、\(TimelineFormatting.duration(from: transition.startDate, to: transition.endDate) ?? "")")
+    }
+}
+
 private struct TimelineRail: View {
     let episode: TimelineEpisode
     let drawsTopLine: Bool
