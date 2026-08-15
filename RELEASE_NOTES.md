@@ -1,24 +1,24 @@
 # DayTrace 1.0
 
-Publisher: nisesimadao
+公開者: nisesimadao
 
-First stable release of DayTrace, a diary-first location journal for iPhone.
+DayTrace 初の安定版リリースです。DayTrace は、iPhone 向けの「日記が主役」の位置情報日記アプリです。
 
-Included: automatic location timeline, tracking diagnostics, Today corrections, historical browsing and editing, Journal and Moment Notes, review reminders, privacy controls, export, On This Day, and Small and Medium Home Screen widgets.
+含まれるもの: 自動位置タイムライン、記録診断、Today の修正 UI、履歴の閲覧と編集、Journal と Moment Notes、振り返り通知、プライバシー設定、書き出し、On This Day、小 / 中サイズのホーム画面ウィジェット。
 
 ## IPA
 
-The GitHub Release includes an **unsigned IPA** plus its SHA-256 checksum. Re-sign the IPA with your own Apple ID / Apple Developer identity using a sideloading tool before installing it on a stock iPhone. A directly installable signed build is not produced because this repository does not contain Apple distribution certificates or provisioning profiles.
+GitHub Release には **未署名 IPA** と SHA-256 チェックサムを添付しています。通常の iPhone に入れる場合は、サイドロード用ツールで自分の Apple ID / Apple Developer の署名に付け替えてからインストールしてください。このリポジトリには Apple の配布証明書や provisioning profile を含めないため、直接インストールできる署名済みビルドは生成していません。
 
-## Highlights
+## ハイライト
 
-- Replaced the character-style mark with a calm page-and-route symbol across the app icon, in-app wordmark, and README header.
-- Movement duration now uses the previous Stay departure and next Stay arrival whenever route evidence confirms movement; a late first GPS sample no longer shortens the displayed trip.
-- Joined the live current-location transition into one continuous Timeline and normalized its rail height, row spacing, selection feedback, shared corner radii, and screen gutters.
-- Refined Today and History around the diary-first hierarchy; the learned-places map is now a secondary History destination instead of a nested tab.
-- Adopted native iOS 26 Liquid Glass for controls and navigation, with system-material fallbacks on iOS 18–25 and Reduce Motion-aware transitions.
-- Removed status-area branding so content never collides with Dynamic Island or notch hardware.
-- Added vertical swipe navigation to the History calendar month label, alongside explicit previous/next month buttons.
-- Added a Debug-only Settings tool that installs or removes deterministic seven-day demo data without touching personal records.
-- Hide Journaling Suggestions from Debug builds when the signing entitlement is unavailable while preserving it for Release builds.
-- Prefill unresolved Stay names with nearby Apple Maps POI suggestions while keeping them unconfirmed until the user reviews/saves them.
+- 以前のキャラクター寄りのマークをやめ、アプリアイコン、アプリ内ワードマーク、README ヘッダーを落ち着いた「紙と道」の記号へ更新しました。
+- 移動時間は、ルート証拠が移動を裏付ける場合に、前の滞在の出発時刻と次の滞在の到着時刻を使うようになりました。最初の GPS サンプルが遅れても、表示上の移動時間が不自然に短くなりません。
+- 現在地までの移動を 1 本の連続したタイムラインとしてつなぎ、レールの高さ、行間、選択表示、角丸、画面余白を整理しました。
+- Today と History を「日記が主役」の階層へ調整し、学習済み場所マップは入れ子のタブではなく History の補助画面にしました。
+- iOS 26 では操作部品とナビゲーションに標準の Liquid Glass を使い、iOS 18-25 では system material にフォールバックします。Reduce Motion にも配慮しています。
+- Dynamic Island や notch と衝突しないよう、ステータス領域のブランド表示を削除しました。
+- History カレンダーの月表示は、前後ボタンに加えて縦スワイプでも移動できるようになりました。
+- Debug ビルドの Settings に、個人データを触らず 7 日分の決定的なデモデータを入れる / 消すツールを追加しました。
+- 署名 entitlements がない Debug ビルドでは Journaling Suggestions を出さず、Release ビルドでは利用可能なままにしました。
+- 未解決の滞在名に Apple Maps の近隣 POI 候補を自動補完します。候補はユーザーが確認 / 保存するまで、学習済みの真実として扱いません。

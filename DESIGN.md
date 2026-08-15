@@ -1,90 +1,90 @@
-# Daytrace UX / UI contract
+# DayTrace UX / UI 契約
 
-This document is a consistency contract for implementation. New screens should not violate it without an explicit product decision.
+この文書は、実装時の一貫性を守るための契約です。新しい画面は、明示的なプロダクト判断なしにここから外れないようにします。
 
-## Product sentence
+## プロダクト文
 
-**Open Daytrace to answer “What happened today?” — not to inspect GPS logs.**
+**DayTrace を開く理由は「今日なにがあったか」を思い出すためであり、GPS ログを眺めるためではない。**
 
-## Information hierarchy
+## 情報階層
 
-1. Day and human-readable timeline
-2. Uncertainty / items worth checking
-3. Journal and memory cues
-4. Map as contextual navigation
-5. Diagnostics and raw tracking details
+1. 日付と、人間が読めるタイムライン
+2. 不確かな点 / 確認した方がよい項目
+3. Journal と記憶の手がかり
+4. 文脈としてのマップ
+5. 診断と生の記録詳細
 
-The map is never a primary tab.
+マップは主タブにしません。
 
-## Navigation
+## ナビゲーション
 
-- **Today** — the current day's projected timeline and journal.
-- **History** — calendar and past days.
-- Settings is presented from Today's trailing toolbar.
-- Search and history map are secondary History actions, not tabs.
+- **今日** — 当日の投影タイムラインと Journal。
+- **履歴** — カレンダーと過去日。
+- Settings は Today の右側 toolbar から表示します。
+- 検索と履歴マップは History の補助アクションであり、タブではありません。
 
-## Timeline grammar
+## タイムライン文法
 
-Only three primary episode types exist:
+主要 episode は 3 種類だけです。
 
-- `Stay` — a period at a place.
-- `Move` — time between stays when movement is supported by evidence.
-- `Gap` — missing or insufficient evidence.
+- `Stay` — ある場所にいた時間。
+- `Move` — 証拠により移動が裏付けられる、滞在と滞在の間の時間。
+- `Gap` — 証拠がない、または足りない時間。
 
-Transport modes, place categories, privacy state, and confidence are attributes — never new top-level timeline card types.
+交通手段、場所カテゴリ、プライバシー状態、信頼度は属性です。トップレベルのタイムラインカード種別を増やしません。
 
-## Confidence language
+## 信頼度の言葉
 
-- Confirmed/high confidence: filled dot + plain place title.
-- Inferred/medium: filled dot + normal title; time may say “around”.
-- Low confidence: outlined dot + `?` / “Check this place”.
+- 確認済み / 高信頼: 塗りつぶし点 + 通常の場所名。
+- 推定 / 中信頼: 塗りつぶし点 + 通常のタイトル。時刻には「頃」を付けることがあります。
+- 低信頼: 枠線点 + `?` / 「場所を確認」。
 
-Never expose numeric confidence scores in normal UI.
+通常 UI に数値の confidence score は出しません。
 
-## Visual system
+## ビジュアルシステム
 
-- Prefer typography, whitespace, and a single timeline rail over stacked cards.
-- Content surfaces use standard system backgrounds.
-- Liquid Glass is reserved for controls and transient chrome on iOS 26+.
-- No decorative gradients are required for the product to feel complete.
-- System colors and Dynamic Type are the default.
-- Information must remain understandable without color.
+- 積み重ねたカードより、タイポグラフィ、余白、1 本のタイムラインレールを優先します。
+- コンテンツ面は標準の system background を使います。
+- Liquid Glass は iOS 26+ の操作部品と一時的な chrome に限定します。
+- 装飾グラデーションがなくても成立する画面にします。
+- system color と Dynamic Type を標準にします。
+- 色がなくても情報を理解できるようにします。
 
-## Motion
+## モーション
 
-- Use `snappy` for selection and lightweight control transitions.
-- Map and timeline selection share one identity.
-- Haptics should communicate confirmation or a snapped time boundary, not decorate scrolling.
-- Avoid large modal transitions for simple edits; prefer direct manipulation or sheets.
+- 選択や軽い操作遷移には `snappy` を使います。
+- マップとタイムラインの選択状態は同じ identity を共有します。
+- haptics は確認完了や時刻境界の snap を伝えるために使い、スクロール装飾には使いません。
+- 単純な編集に大きな modal 遷移は使わず、直接操作または sheet を優先します。
 
-## Editing
+## 編集
 
-Normal edits create or update `UserAssertion`; they do not mutate raw evidence.
+通常の編集は `UserAssertion` を作成 / 更新します。生の証拠データは変更しません。
 
-Rules:
+ルール:
 
-1. User assertions always win over inference.
-2. Reprocessing must preserve assertions.
-3. Editing a boundary changes adjacent episode geometry so overlap is structurally impossible.
-4. “Merge stays” and “Merge places” are different operations.
-5. Normal deletion is reversible suppression. Raw-data deletion is a separate privacy action.
-6. Every drag interaction must have an accessible form/sheet alternative.
+1. ユーザーの assertion は常に推定より優先されます。
+2. 再処理は assertion を保持しなければなりません。
+3. 境界編集では隣接 episode の形も変わり、構造的に overlap が起きないようにします。
+4. 「滞在を結合」と「場所を結合」は別の操作です。
+5. 通常の削除は取り消し可能な非表示です。生データ削除は別のプライバシー操作です。
+6. すべての drag 操作には、アクセシブルな form / sheet 代替を用意します。
 
-## Journal integrity
+## Journal の完全性
 
-User-written prose is never rewritten when timeline inference changes. Timeline context can update beside it, but journal text only changes through an explicit user edit.
+ユーザーが書いた文章は、タイムライン推定が変わっても書き換えません。横にあるタイムライン文脈は更新されても、Journal 本文は明示的なユーザー編集でしか変わりません。
 
-## Empty and degraded states
+## 空状態と劣化状態
 
-- No location permission: Daytrace remains a journal.
-- No location evidence: Today still exposes the journal composer.
-- Reduced accuracy: show a quiet status, not an alarming error.
-- Missing interval: show `Gap`; do not fabricate a route.
-- Stale location: show “last confirmed” rather than “current”.
+- 位置情報権限がない: DayTrace は Journal として使えます。
+- 位置証拠がない: Today は Journal 入力を出します。
+- 正確な位置情報が使えない: 強いエラーではなく、静かな状態表示にします。
+- 記録がない区間: `Gap` を表示し、経路を捏造しません。
+- 古い位置: 「現在」ではなく「最後に確認」として表示します。
 
-## Privacy
+## プライバシー
 
-- Lock-screen notification copy avoids place names by default.
-- Private places can be redacted from external surfaces.
-- Raw evidence and durable memories have separate retention policies.
-- Server sync is not required for core use.
+- ロック画面通知の文面には、標準で場所名を含めません。
+- private な場所名は外部表示で伏せられるようにします。
+- 生の証拠データと、長期的に残す記憶データには別の保持ポリシーを持たせます。
+- コア利用にサーバー同期は必須ではありません。
