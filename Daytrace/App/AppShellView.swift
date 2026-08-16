@@ -26,9 +26,7 @@ struct AppShellView: View {
             }
 
             Tab("履歴", systemImage: "calendar", value: AppTab.history) {
-                NavigationStack {
-                    HistoryRootView()
-                }
+                HistoryRootView()
             }
         }
         .daytraceModernTabBar()

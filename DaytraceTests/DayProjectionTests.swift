@@ -46,6 +46,36 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertFalse(tomorrow.intersects(start: episodeStart, end: nil, openEndedAt: now))
     }
 
+    func testCalendarMonthGridUsesMondayFirstStableSixWeekGrid() throws {
+        let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let month = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 16, hour: 20)))
+
+        let days = CalendarMonthGrid.days(for: month, timeZone: timeZone)
+
+        XCTAssertEqual(days.count, 42)
+        XCTAssertEqual(days.prefix(5).compactMap(\.self).count, 0)
+        XCTAssertEqual(days.compactMap(\.self).count, 31)
+        XCTAssertEqual(
+            days.compactMap { $0 }.first.map { CalendarDay(containing: $0, timeZone: timeZone) },
+            CalendarDay(containing: try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 1, hour: 12))), timeZone: timeZone)
+        )
+    }
+
+    func testCalendarMonthShiftKeepsFirstDayAnchorAcrossShortMonths() throws {
+        let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let januaryEnd = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 1, day: 31, hour: 23)))
+
+        let february = CalendarMonthGrid.shiftedMonth(from: januaryEnd, by: 1, timeZone: timeZone)
+        let march = CalendarMonthGrid.shiftedMonth(from: february, by: 1, timeZone: timeZone)
+
+        XCTAssertEqual(CalendarDay(containing: february, timeZone: timeZone), CalendarDay(containing: try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 2, day: 1, hour: 12))), timeZone: timeZone))
+        XCTAssertEqual(CalendarDay(containing: march, timeZone: timeZone), CalendarDay(containing: try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 1, hour: 12))), timeZone: timeZone))
+    }
+
     @MainActor
     func testRenameAssertionDoesNotFreezeAutomaticDeparture() throws {
         let context = try makeContext()

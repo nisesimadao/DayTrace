@@ -7,21 +7,36 @@ enum HistoryDestination: Hashable {
 }
 
 struct HistoryRootView: View {
+    @State private var path = NavigationPath()
+
     var body: some View {
-        HistoryView()
-            .navigationTitle("履歴")
-            .navigationBarTitleDisplayMode(.large)
-            .navigationDestination(for: HistoryDestination.self) { destination in
-                switch destination {
-                case .places:
-                    HistoryPlacesMap()
-                        .navigationTitle("場所の記憶")
-                        .navigationBarTitleDisplayMode(.inline)
+        NavigationStack(path: $path) {
+            HistoryView(
+                openPlaces: openPlaces,
+                openDay: openDay
+            )
+                .navigationTitle("履歴")
+                .navigationBarTitleDisplayMode(.large)
+                .navigationDestination(for: HistoryDestination.self) { destination in
+                    switch destination {
+                    case .places:
+                        HistoryPlacesMap(openDay: openDay)
+                            .navigationTitle("場所の記憶")
+                            .navigationBarTitleDisplayMode(.inline)
+                    }
                 }
-            }
-            .navigationDestination(for: CalendarDay.self) { day in
-                HistoricalDayDetailView(day: day)
-            }
+                .navigationDestination(for: CalendarDay.self) { day in
+                    HistoricalDayDetailView(day: day)
+                }
+        }
+    }
+
+    private func openPlaces() {
+        path.append(HistoryDestination.places)
+    }
+
+    private func openDay(_ day: CalendarDay) {
+        path.append(day)
     }
 }
 
@@ -34,6 +49,8 @@ struct HistoryPlacesMap: View {
 
     @State private var selectedPlaceID: UUID?
     @State private var position: MapCameraPosition = .automatic
+
+    let openDay: (CalendarDay) -> Void
 
     private var visibleEpisodes: [TimelineEpisode] {
         let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
@@ -131,7 +148,7 @@ struct HistoryPlacesMap: View {
                     .sensoryFeedback(.selection, trigger: selectedPlaceID)
 
                     if let selectedSummary {
-                        SelectedHistoryPlaceCard(summary: selectedSummary)
+                        SelectedHistoryPlaceCard(summary: selectedSummary, openDay: openDay)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
 
@@ -212,6 +229,7 @@ private struct HistoryPlaceMarker: View {
 
 private struct SelectedHistoryPlaceCard: View {
     let summary: HistoryPlaceSummary
+    let openDay: (CalendarDay) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -230,7 +248,9 @@ private struct SelectedHistoryPlaceCard: View {
             Spacer()
 
             if let latestDay = summary.latestDay {
-                NavigationLink(value: latestDay) {
+                Button {
+                    openDay(latestDay)
+                } label: {
                     HStack(spacing: 4) {
                         Text("最後の記録")
                         Image(systemName: "chevron.right")

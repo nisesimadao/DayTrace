@@ -64,6 +64,62 @@ struct CalendarDay: Hashable, Comparable, Sendable {
     }
 }
 
+struct CalendarMonthGrid: Sendable {
+    static let weekdayTitles = ["月", "火", "水", "木", "金", "土", "日"]
+
+    static func monthAnchor(containing date: Date, timeZone: TimeZone) -> Date {
+        let calendar = gregorianCalendar(timeZone: timeZone)
+        let components = calendar.dateComponents([.year, .month], from: date)
+        return calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: components.year,
+            month: components.month,
+            day: 1,
+            hour: 12
+        )) ?? date
+    }
+
+    static func shiftedMonth(from date: Date, by amount: Int, timeZone: TimeZone) -> Date {
+        let anchor = monthAnchor(containing: date, timeZone: timeZone)
+        let calendar = gregorianCalendar(timeZone: timeZone)
+        let shifted = calendar.date(byAdding: .month, value: amount, to: anchor) ?? anchor
+        return monthAnchor(containing: shifted, timeZone: timeZone)
+    }
+
+    static func days(for displayedMonth: Date, timeZone: TimeZone) -> [Date?] {
+        let calendar = gregorianCalendar(timeZone: timeZone)
+        let anchor = monthAnchor(containing: displayedMonth, timeZone: timeZone)
+
+        guard let interval = calendar.dateInterval(of: .month, for: anchor),
+              let range = calendar.range(of: .day, in: .month, for: anchor)
+        else { return [] }
+
+        let weekday = calendar.component(.weekday, from: interval.start)
+        let leading = (weekday - calendar.firstWeekday + 7) % 7
+        let monthDates = range.compactMap { day in
+            calendar.date(from: DateComponents(
+                timeZone: timeZone,
+                year: calendar.component(.year, from: interval.start),
+                month: calendar.component(.month, from: interval.start),
+                day: day,
+                hour: 12
+            ))
+        }
+        let trailing = max(0, 42 - leading - monthDates.count)
+        return Array(repeating: nil, count: leading)
+            + monthDates.map(Optional.some)
+            + Array(repeating: nil, count: trailing)
+    }
+
+    private static func gregorianCalendar(timeZone: TimeZone) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "ja_JP")
+        calendar.timeZone = timeZone
+        calendar.firstWeekday = 2
+        return calendar
+    }
+}
+
 enum TimelineDayProjection {
     static func timeZone(identifier: String) -> TimeZone {
         TimeZone(identifier: identifier) ?? .current

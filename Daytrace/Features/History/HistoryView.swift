@@ -9,8 +9,11 @@ struct HistoryView: View {
     @Query(sort: \MomentNote.timestamp, order: .reverse) private var momentNotes: [MomentNote]
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
 
-    @State private var displayedMonth = Date.now
+    @State private var displayedMonth = CalendarMonthGrid.monthAnchor(containing: .now, timeZone: .current)
     @State private var searchText = ""
+
+    let openPlaces: () -> Void
+    let openDay: (CalendarDay) -> Void
 
     private var visibleEpisodes: [TimelineEpisode] {
         let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
@@ -25,14 +28,15 @@ struct HistoryView: View {
         ScrollView {
             if trimmedSearchText.isEmpty {
                 VStack(alignment: .leading, spacing: DS.sectionSpacing) {
-                    HistoryPlacesLink()
+                    HistoryPlacesLink(openPlaces: openPlaces)
                     HistoryCalendarCard(
                         displayedMonth: displayedMonth,
                         setDisplayedMonth: { displayedMonth = $0 },
                         episodes: visibleEpisodes,
-                        journals: journals
+                        journals: journals,
+                        openDay: openDay
                     )
-                    RecentDaysList(episodes: visibleEpisodes, journals: journals)
+                    RecentDaysList(episodes: visibleEpisodes, journals: journals, openDay: openDay)
                 }
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 40)
@@ -42,7 +46,8 @@ struct HistoryView: View {
                     query: trimmedSearchText,
                     episodes: visibleEpisodes,
                     journals: journals,
-                    momentNotes: momentNotes
+                    momentNotes: momentNotes,
+                    openDay: openDay
                 )
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 40)
@@ -61,9 +66,10 @@ struct HistoryView: View {
 
 private struct HistoryPlacesLink: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let openPlaces: () -> Void
 
     var body: some View {
-        NavigationLink(value: HistoryDestination.places) {
+        Button(action: openPlaces) {
             Group {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: 14) {
@@ -132,6 +138,7 @@ private struct HistoryCalendarCard: View {
     let setDisplayedMonth: (Date) -> Void
     let episodes: [TimelineEpisode]
     let journals: [JournalEntry]
+    let openDay: (CalendarDay) -> Void
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
 
@@ -153,7 +160,8 @@ private struct HistoryCalendarCard: View {
                 displayedMonth: displayedMonth,
                 episodes: episodes,
                 journals: journals,
-                columns: columns
+                columns: columns,
+                openDay: openDay
             )
 
             HStack(spacing: 16) {
@@ -225,7 +233,7 @@ private struct MonthHeader: View {
         }
         .frame(maxWidth: .infinity, minHeight: 44)
         .contentShape(Rectangle())
-        .highPriorityGesture(monthSwipeGesture)
+        .simultaneousGesture(monthSwipeGesture)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
         .accessibilityHint("上下にスワイプして月を変更できます")
@@ -254,7 +262,7 @@ private struct MonthHeader: View {
     }
 
     private func shiftMonth(_ amount: Int) {
-        let shifted = Calendar.current.date(byAdding: .month, value: amount, to: displayedMonth) ?? displayedMonth
+        let shifted = CalendarMonthGrid.shiftedMonth(from: displayedMonth, by: amount, timeZone: .current)
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.28)) {
             setDisplayedMonth(shifted)
         }
@@ -276,29 +284,20 @@ private struct MonthGrid: View {
     let episodes: [TimelineEpisode]
     let journals: [JournalEntry]
     let columns: [GridItem]
+    let openDay: (CalendarDay) -> Void
 
     private var today: CalendarDay {
         CalendarDay(containing: .now, timeZone: .current)
     }
 
     private var days: [Date?] {
-        var calendar = Calendar.current
-        calendar.firstWeekday = 2
-        guard let interval = calendar.dateInterval(of: .month, for: displayedMonth),
-              let range = calendar.range(of: .day, in: .month, for: displayedMonth)
-        else { return [] }
-
-        let weekday = calendar.component(.weekday, from: interval.start)
-        let leading = (weekday - calendar.firstWeekday + 7) % 7
-        return Array(repeating: nil, count: leading) + range.compactMap { day in
-            calendar.date(byAdding: .day, value: day - 1, to: interval.start)
-        }.map(Optional.some)
+        CalendarMonthGrid.days(for: displayedMonth, timeZone: .current)
     }
 
     var body: some View {
         VStack(spacing: 9) {
             HStack {
-                ForEach(["月", "火", "水", "木", "金", "土", "日"], id: \.self) { title in
+                ForEach(CalendarMonthGrid.weekdayTitles, id: \.self) { title in
                     Text(title)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -318,9 +317,13 @@ private struct MonthGrid: View {
                         )
 
                         if day <= today {
-                            NavigationLink(value: day) { cell }
-                                .buttonStyle(.plain)
-                                .hoverEffect(.highlight)
+                            Button {
+                                openDay(day)
+                            } label: {
+                                cell
+                            }
+                            .buttonStyle(.plain)
+                            .hoverEffect(.highlight)
                         } else {
                             cell.opacity(0.35)
                         }
@@ -387,6 +390,7 @@ private struct DayCell: View {
 private struct RecentDaysList: View {
     let episodes: [TimelineEpisode]
     let journals: [JournalEntry]
+    let openDay: (CalendarDay) -> Void
 
     private var recentDays: [CalendarDay] {
         var days = Set<CalendarDay>()
@@ -422,7 +426,9 @@ private struct RecentDaysList: View {
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(recentDays.enumerated()), id: \.element) { index, day in
-                        NavigationLink(value: day) {
+                        Button {
+                            openDay(day)
+                        } label: {
                             RecentDayRow(day: day, episodes: episodes, journals: journals)
                         }
                         .buttonStyle(.daytraceRowLink)
@@ -524,6 +530,7 @@ private struct HistorySearchResults: View {
     let episodes: [TimelineEpisode]
     let journals: [JournalEntry]
     let momentNotes: [MomentNote]
+    let openDay: (CalendarDay) -> Void
 
     private var results: [HistorySearchResult] {
         var episodesByDay: [CalendarDay: [TimelineEpisode]] = [:]
@@ -582,7 +589,9 @@ private struct HistorySearchResults: View {
                     .padding(.top, 12)
 
                 ForEach(results) { result in
-                    NavigationLink(value: result.day) {
+                    Button {
+                        openDay(result.day)
+                    } label: {
                         SearchDayRow(result: result)
                     }
                     .buttonStyle(.daytraceRowLink)
