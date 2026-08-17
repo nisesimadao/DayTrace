@@ -19,6 +19,103 @@ struct DayRoutePoint: Identifiable, Sendable {
     }
 }
 
+struct DayRouteStayInput: Equatable, Sendable {
+    let id: UUID
+    let startDate: Date
+    let endDate: Date?
+    let latitude: Double
+    let longitude: Double
+
+    init(id: UUID, startDate: Date, endDate: Date?, latitude: Double, longitude: Double) {
+        self.id = id
+        self.startDate = startDate
+        self.endDate = endDate
+        self.latitude = latitude
+        self.longitude = longitude
+    }
+
+    init?(episode: TimelineEpisode) {
+        guard episode.kind == .stay,
+              let latitude = episode.latitude,
+              let longitude = episode.longitude else {
+            return nil
+        }
+        id = episode.id
+        startDate = episode.startDate
+        endDate = episode.endDate
+        self.latitude = latitude
+        self.longitude = longitude
+    }
+}
+
+struct DayRouteLocationInput: Equatable, Sendable {
+    let id: UUID
+    let timestamp: Date
+    let latitude: Double
+    let longitude: Double
+    let horizontalAccuracy: Double
+    let source: EvidenceSource
+
+    init(
+        id: UUID,
+        timestamp: Date,
+        latitude: Double,
+        longitude: Double,
+        horizontalAccuracy: Double,
+        source: EvidenceSource
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.latitude = latitude
+        self.longitude = longitude
+        self.horizontalAccuracy = horizontalAccuracy
+        self.source = source
+    }
+
+    init(evidence: LocationEvidence) {
+        id = evidence.id
+        timestamp = evidence.timestamp
+        latitude = evidence.latitude
+        longitude = evidence.longitude
+        horizontalAccuracy = evidence.horizontalAccuracy
+        source = evidence.source
+    }
+}
+
+struct DayRouteCurrentLocationInput: Equatable, Sendable {
+    let startDate: Date
+    let lastEvidenceAt: Date
+    let latitude: Double
+    let longitude: Double
+    let horizontalAccuracy: Double
+    let timeZoneIdentifier: String
+
+    init(
+        startDate: Date,
+        lastEvidenceAt: Date,
+        latitude: Double,
+        longitude: Double,
+        horizontalAccuracy: Double,
+        timeZoneIdentifier: String
+    ) {
+        self.startDate = startDate
+        self.lastEvidenceAt = lastEvidenceAt
+        self.latitude = latitude
+        self.longitude = longitude
+        self.horizontalAccuracy = horizontalAccuracy
+        self.timeZoneIdentifier = timeZoneIdentifier
+    }
+
+    init(currentLocation: CurrentLocationContext) {
+        startDate = currentLocation.startDate
+        lastEvidenceAt = currentLocation.lastEvidenceAt
+        latitude = currentLocation.latitude
+        longitude = currentLocation.longitude
+        horizontalAccuracy = currentLocation.horizontalAccuracy
+        timeZoneIdentifier = currentLocation.timeZoneIdentifier
+    }
+}
+
 @MainActor
 enum DayRouteProjection {
     struct Options: Equatable, Sendable {
@@ -50,11 +147,23 @@ enum DayRouteProjection {
         currentLocation: CurrentLocationContext? = nil,
         options: Options = .detail
     ) -> [DayRoutePoint] {
-        let stays = episodes
-            .filter { $0.kind == .stay && $0.latitude != nil && $0.longitude != nil }
-            .sorted { $0.startDate < $1.startDate }
+        points(
+            stays: episodes.compactMap { DayRouteStayInput(episode: $0) },
+            locationEvidence: locationEvidence.map { DayRouteLocationInput(evidence: $0) },
+            currentLocation: currentLocation.map { DayRouteCurrentLocationInput(currentLocation: $0) },
+            options: options
+        )
+    }
 
-        guard let firstStay = stays.first else {
+    static func points(
+        stays: [DayRouteStayInput],
+        locationEvidence: [DayRouteLocationInput],
+        currentLocation: DayRouteCurrentLocationInput? = nil,
+        options: Options = .detail
+    ) -> [DayRoutePoint] {
+        let sortedStays = stays.sorted { $0.startDate < $1.startDate }
+
+        guard let firstStay = sortedStays.first else {
             guard let currentLocation else { return [] }
             return [point(for: currentLocation)]
         }
@@ -67,11 +176,11 @@ enum DayRouteProjection {
             }
             .sorted { $0.timestamp < $1.timestamp }
 
-        var points: [DayRoutePoint] = [point(for: firstStay)]
+        var routePoints: [DayRoutePoint] = [point(for: firstStay)]
 
-        for pair in zip(stays, stays.dropFirst()) {
+        for pair in zip(sortedStays, sortedStays.dropFirst()) {
             if let departure = pair.0.endDate {
-                points.append(contentsOf: samples(
+                routePoints.append(contentsOf: samples(
                     from: usableSamples,
                     start: departure,
                     end: pair.1.startDate,
@@ -79,23 +188,23 @@ enum DayRouteProjection {
                     options: options
                 ))
             }
-            points.append(point(for: pair.1))
+            routePoints.append(point(for: pair.1))
         }
 
         if let currentLocation, options.includesCurrentLocationInRoute {
-            let lastStay = stays[stays.count - 1]
+            let lastStay = sortedStays[sortedStays.count - 1]
             let routeStart = lastStay.endDate ?? lastStay.startDate
-            points.append(contentsOf: samples(
+            routePoints.append(contentsOf: samples(
                 from: usableSamples,
                 start: routeStart,
                 end: currentLocation.lastEvidenceAt,
                 startCoordinate: coordinate(for: lastStay),
                 options: options
             ))
-            points.append(point(for: currentLocation))
+            routePoints.append(point(for: currentLocation))
         }
 
-        return removeAdjacentDuplicates(points)
+        return removeAdjacentDuplicates(routePoints)
     }
 
     static func movementSampleCount(
@@ -114,7 +223,7 @@ enum DayRouteProjection {
     }
 
     private static func samples(
-        from evidence: [LocationEvidence],
+        from evidence: [DayRouteLocationInput],
         start: Date,
         end: Date,
         startCoordinate: CLLocationCoordinate2D,
@@ -122,9 +231,12 @@ enum DayRouteProjection {
     ) -> [DayRoutePoint] {
         guard end > start else { return [] }
 
-        let samples = evidence.filter { $0.timestamp > start && $0.timestamp < end }
+        let lowerBound = firstIndex(after: start, in: evidence)
+        let upperBound = firstIndex(atOrAfter: end, in: evidence)
+        guard lowerBound < upperBound else { return [] }
+        let segmentSamples = Array(evidence[lowerBound..<upperBound])
         let thinnedSamples = thin(
-            samples,
+            segmentSamples,
             startCoordinate: startCoordinate,
             minimumInterval: options.minimumSampleInterval,
             minimumDistance: options.minimumSampleDistance
@@ -142,12 +254,12 @@ enum DayRouteProjection {
     }
 
     private static func thin(
-        _ samples: [LocationEvidence],
+        _ samples: [DayRouteLocationInput],
         startCoordinate: CLLocationCoordinate2D,
         minimumInterval: TimeInterval,
         minimumDistance: CLLocationDistance
-    ) -> [LocationEvidence] {
-        var thinned: [LocationEvidence] = []
+    ) -> [DayRouteLocationInput] {
+        var thinned: [DayRouteLocationInput] = []
         var lastAcceptedLocation = CLLocation(
             latitude: startCoordinate.latitude,
             longitude: startCoordinate.longitude
@@ -180,9 +292,9 @@ enum DayRouteProjection {
     }
 
     private static func decimate(
-        _ samples: [LocationEvidence],
+        _ samples: [DayRouteLocationInput],
         maximumCount: Int
-    ) -> [LocationEvidence] {
+    ) -> [DayRouteLocationInput] {
         guard samples.count > maximumCount, maximumCount > 1 else { return samples }
         let stride = Double(samples.count - 1) / Double(maximumCount - 1)
         return (0..<maximumCount).map { index in
@@ -190,24 +302,24 @@ enum DayRouteProjection {
         }
     }
 
-    private static func point(for episode: TimelineEpisode) -> DayRoutePoint {
+    private static func point(for stay: DayRouteStayInput) -> DayRoutePoint {
         DayRoutePoint(
-            id: "stay-\(episode.id.uuidString)",
+            id: "stay-\(stay.id.uuidString)",
             kind: .stay,
-            timestamp: episode.startDate,
-            latitude: episode.latitude ?? 0,
-            longitude: episode.longitude ?? 0
+            timestamp: stay.startDate,
+            latitude: stay.latitude,
+            longitude: stay.longitude
         )
     }
 
-    private static func coordinate(for episode: TimelineEpisode) -> CLLocationCoordinate2D {
+    private static func coordinate(for stay: DayRouteStayInput) -> CLLocationCoordinate2D {
         CLLocationCoordinate2D(
-            latitude: episode.latitude ?? 0,
-            longitude: episode.longitude ?? 0
+            latitude: stay.latitude,
+            longitude: stay.longitude
         )
     }
 
-    private static func point(for currentLocation: CurrentLocationContext) -> DayRoutePoint {
+    private static func point(for currentLocation: DayRouteCurrentLocationInput) -> DayRoutePoint {
         DayRoutePoint(
             id: "current-\(currentLocation.lastEvidenceAt.timeIntervalSinceReferenceDate)",
             kind: .currentLocation,
@@ -215,6 +327,40 @@ enum DayRouteProjection {
             latitude: currentLocation.latitude,
             longitude: currentLocation.longitude
         )
+    }
+
+    private static func firstIndex(
+        after timestamp: Date,
+        in evidence: [DayRouteLocationInput]
+    ) -> Int {
+        var lower = 0
+        var upper = evidence.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if evidence[middle].timestamp <= timestamp {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
+    }
+
+    private static func firstIndex(
+        atOrAfter timestamp: Date,
+        in evidence: [DayRouteLocationInput]
+    ) -> Int {
+        var lower = 0
+        var upper = evidence.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if evidence[middle].timestamp < timestamp {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
     }
 
     private static func removeAdjacentDuplicates(_ points: [DayRoutePoint]) -> [DayRoutePoint] {

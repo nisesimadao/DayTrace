@@ -590,139 +590,38 @@ private struct DayMapCanvas: View, Equatable {
     }
 
     private func routePoints() -> [DayRoutePoint] {
-        guard let firstStay = stayPoints.first else {
-            guard let currentLocation else { return [] }
-            return [point(for: currentLocation)]
-        }
-
-        let usableSamples = routeLocations.filter {
-            $0.horizontalAccuracy >= 0
-                && $0.horizontalAccuracy <= 1_000
-                && ($0.source == .standardLocation || $0.source == .significantChange)
-        }
-
-        var points: [DayRoutePoint] = [point(for: firstStay)]
-
-        for pair in zip(stayPoints, stayPoints.dropFirst()) {
-            if let departure = pair.0.endDate {
-                points.append(contentsOf: routeSamples(
-                    from: usableSamples,
-                    start: departure,
-                    end: pair.1.startDate
-                ))
-            }
-            points.append(point(for: pair.1))
-        }
-
-        if let currentLocation, routeOptions.includesCurrentLocationInRoute {
-            let lastStay = stayPoints[stayPoints.count - 1]
-            let routeStart = lastStay.endDate ?? lastStay.startDate
-            points.append(contentsOf: routeSamples(
-                from: usableSamples,
-                start: routeStart,
-                end: currentLocation.lastEvidenceAt
-            ))
-            points.append(point(for: currentLocation))
-        }
-
-        return removeAdjacentDuplicates(points)
-    }
-
-    private func routeSamples(
-        from evidence: [DayMapRouteLocation],
-        start: Date,
-        end: Date
-    ) -> [DayRoutePoint] {
-        guard end > start else { return [] }
-        let samples = evidence.filter { $0.timestamp > start && $0.timestamp < end }
-        let thinnedSamples = thin(samples)
-        let decimatedSamples = decimate(thinnedSamples, maximumCount: routeOptions.maximumSamplesPerSegment)
-        return decimatedSamples.map { sample in
-            DayRoutePoint(
-                id: "sample-\(sample.id.uuidString)",
-                kind: .movementSample,
-                timestamp: sample.timestamp,
-                latitude: sample.latitude,
-                longitude: sample.longitude
-            )
-        }
-    }
-
-    private func thin(_ samples: [DayMapRouteLocation]) -> [DayMapRouteLocation] {
-        guard let first = samples.first else { return [] }
-
-        var thinned = [first]
-        var lastAccepted = first
-
-        for sample in samples.dropFirst() {
-            let elapsed = sample.timestamp.timeIntervalSince(lastAccepted.timestamp)
-            let distance = sample.location.distance(from: lastAccepted.location)
-            guard elapsed >= routeOptions.minimumSampleInterval
-                    && distance >= routeOptions.minimumSampleDistance else {
-                continue
-            }
-            thinned.append(sample)
-            lastAccepted = sample
-        }
-
-        if let last = samples.last, thinned.last?.id != last.id {
-            let distance = last.location.distance(from: thinned.last?.location ?? first.location)
-            if distance >= routeOptions.minimumSampleDistance {
-                thinned.append(last)
-            }
-        }
-
-        return thinned
-    }
-
-    private func decimate(
-        _ samples: [DayMapRouteLocation],
-        maximumCount: Int
-    ) -> [DayMapRouteLocation] {
-        guard samples.count > maximumCount, maximumCount > 1 else { return samples }
-        let stride = Double(samples.count - 1) / Double(maximumCount - 1)
-        return (0..<maximumCount).map { index in
-            samples[Int((Double(index) * stride).rounded())]
-        }
-    }
-
-    private func point(for stay: DayMapStayPoint) -> DayRoutePoint {
-        DayRoutePoint(
-            id: "stay-\(stay.id.uuidString)",
-            kind: .stay,
-            timestamp: stay.startDate,
-            latitude: stay.latitude,
-            longitude: stay.longitude
+        DayRouteProjection.points(
+            stays: stayPoints.map { point in
+                DayRouteStayInput(
+                    id: point.id,
+                    startDate: point.startDate,
+                    endDate: point.endDate,
+                    latitude: point.latitude,
+                    longitude: point.longitude
+                )
+            },
+            locationEvidence: routeLocations.map { location in
+                DayRouteLocationInput(
+                    id: location.id,
+                    timestamp: location.timestamp,
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                    horizontalAccuracy: location.horizontalAccuracy,
+                    source: location.source
+                )
+            },
+            currentLocation: currentLocation.map { location in
+                DayRouteCurrentLocationInput(
+                    startDate: location.startDate,
+                    lastEvidenceAt: location.lastEvidenceAt,
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                    horizontalAccuracy: location.horizontalAccuracy,
+                    timeZoneIdentifier: location.timeZoneIdentifier
+                )
+            },
+            options: routeOptions
         )
-    }
-
-    private func point(for currentLocation: DayMapCurrentLocation) -> DayRoutePoint {
-        DayRoutePoint(
-            id: "current-\(currentLocation.lastEvidenceAt.timeIntervalSinceReferenceDate)",
-            kind: .currentLocation,
-            timestamp: currentLocation.lastEvidenceAt,
-            latitude: currentLocation.latitude,
-            longitude: currentLocation.longitude
-        )
-    }
-
-    private func removeAdjacentDuplicates(_ points: [DayRoutePoint]) -> [DayRoutePoint] {
-        var deduplicated: [DayRoutePoint] = []
-
-        for point in points {
-            guard let previous = deduplicated.last else {
-                deduplicated.append(point)
-                continue
-            }
-
-            let previousLocation = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
-            let pointLocation = CLLocation(latitude: point.latitude, longitude: point.longitude)
-            if previousLocation.distance(from: pointLocation) >= 5 {
-                deduplicated.append(point)
-            }
-        }
-
-        return deduplicated
     }
 
     private func visibleMovementSamplePoints(in route: DayRouteSnapshot) -> [DayRoutePoint] {

@@ -165,6 +165,7 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertEqual(Set(fetched.map(\.id)), expectedTargetIDs)
     }
 
+    @MainActor
     func testHistoryDayIndexTreatsEpisodeEndAsExclusive() throws {
         let timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
         var calendar = Calendar(identifier: .gregorian)
@@ -207,6 +208,7 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertEqual(indexed, Set([august12]))
     }
 
+    @MainActor
     func testHistoryDayIndexRespectsDSTAndRecordedTimezone() throws {
         let timeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
         var calendar = Calendar(identifier: .gregorian)
@@ -1340,6 +1342,144 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertEqual(points.map(\.kind), [.stay, .movementSample, .stay])
         XCTAssertEqual(points.map(\.latitude), [34.660, 34.680, 34.700])
         XCTAssertEqual(points.map(\.longitude), [133.920, 133.940, 133.960])
+    }
+
+    @MainActor
+    func testDayRouteProjectionSnapshotInputsMatchModelProjection() throws {
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let secondStay = timelineStay(
+            start: baseTime.addingTimeInterval(90 * 60),
+            end: baseTime.addingTimeInterval(120 * 60),
+            latitude: 34.700,
+            longitude: 133.960
+        )
+        let movingSample = locationEvidence(
+            at: baseTime.addingTimeInterval(75 * 60),
+            latitude: 34.680,
+            longitude: 133.940,
+            speed: 12,
+            source: .standardLocation
+        )
+
+        let modelPoints = DayRouteProjection.points(
+            episodes: [secondStay, firstStay],
+            locationEvidence: [movingSample],
+            options: .preview
+        )
+        let snapshotPoints = DayRouteProjection.points(
+            stays: [secondStay, firstStay].compactMap { DayRouteStayInput(episode: $0) },
+            locationEvidence: [DayRouteLocationInput(evidence: movingSample)],
+            options: .preview
+        )
+
+        XCTAssertEqual(snapshotPoints.map(\.id), modelPoints.map(\.id))
+        XCTAssertEqual(snapshotPoints.map(\.kind), modelPoints.map(\.kind))
+        XCTAssertEqual(snapshotPoints.map(\.timestamp), modelPoints.map(\.timestamp))
+        XCTAssertEqual(snapshotPoints.map(\.latitude), modelPoints.map(\.latitude))
+        XCTAssertEqual(snapshotPoints.map(\.longitude), modelPoints.map(\.longitude))
+    }
+
+    @MainActor
+    func testDayRouteProjectionExcludesSamplesAtTransitionBoundaries() throws {
+        let departure = baseTime.addingTimeInterval(60 * 60)
+        let arrival = baseTime.addingTimeInterval(90 * 60)
+        let firstStay = timelineStay(
+            start: baseTime,
+            end: departure,
+            latitude: 34.660,
+            longitude: 133.920
+        )
+        let secondStay = timelineStay(
+            start: arrival,
+            end: arrival.addingTimeInterval(30 * 60),
+            latitude: 34.720,
+            longitude: 133.980
+        )
+        let atDeparture = locationEvidence(
+            at: departure,
+            latitude: 34.670,
+            longitude: 133.930,
+            speed: 8,
+            source: .standardLocation
+        )
+        let inside = locationEvidence(
+            at: departure.addingTimeInterval(15 * 60),
+            latitude: 34.690,
+            longitude: 133.950,
+            speed: 8,
+            source: .standardLocation
+        )
+        let atArrival = locationEvidence(
+            at: arrival,
+            latitude: 34.710,
+            longitude: 133.970,
+            speed: 8,
+            source: .standardLocation
+        )
+
+        let points = DayRouteProjection.points(
+            episodes: [firstStay, secondStay],
+            locationEvidence: [atArrival, inside, atDeparture],
+            options: .preview
+        )
+
+        XCTAssertEqual(points.map(\.kind), [.stay, .movementSample, .stay])
+        XCTAssertEqual(points[1].id, "sample-\(inside.id.uuidString)")
+    }
+
+    @MainActor
+    func testDayRouteProjectionLargeSnapshotBoundsSamplesPerSegment() {
+        let segmentCount = 12
+        let segmentDuration: TimeInterval = 2 * 60 * 60
+        let stayDuration: TimeInterval = 15 * 60
+        let stays = (0...segmentCount).map { index in
+            let start = baseTime.addingTimeInterval(Double(index) * segmentDuration)
+            return DayRouteStayInput(
+                id: UUID(),
+                startDate: start,
+                endDate: start.addingTimeInterval(stayDuration),
+                latitude: 34.60 + Double(index) * 0.02,
+                longitude: 133.80 + Double(index) * 0.02
+            )
+        }
+        var samples: [DayRouteLocationInput] = []
+        samples.reserveCapacity(segmentCount * 1_000)
+        for segment in 0..<segmentCount {
+            let start = stays[segment].endDate!
+            let end = stays[segment + 1].startDate
+            for sampleIndex in 1...1_000 {
+                let fraction = Double(sampleIndex) / 1_001
+                let timestamp = start.addingTimeInterval(end.timeIntervalSince(start) * fraction)
+                samples.append(DayRouteLocationInput(
+                    id: UUID(),
+                    timestamp: timestamp,
+                    latitude: stays[segment].latitude
+                        + (stays[segment + 1].latitude - stays[segment].latitude) * fraction,
+                    longitude: stays[segment].longitude
+                        + (stays[segment + 1].longitude - stays[segment].longitude) * fraction,
+                    horizontalAccuracy: 20,
+                    source: .standardLocation
+                ))
+            }
+        }
+
+        let points = DayRouteProjection.points(
+            stays: stays,
+            locationEvidence: Array(samples.reversed()),
+            options: .preview
+        )
+        let movementCount = points.count { $0.kind == .movementSample }
+
+        XCTAssertLessThanOrEqual(
+            movementCount,
+            segmentCount * DayRouteProjection.Options.preview.maximumSamplesPerSegment
+        )
+        XCTAssertEqual(points.count { $0.kind == .stay }, stays.count)
     }
 
     @MainActor
