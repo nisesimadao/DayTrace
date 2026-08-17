@@ -205,7 +205,6 @@ struct TimelineEngine {
     }
 
     func rebuildTransitions(covering interval: DateInterval, in context: ModelContext) throws {
-        let existingEpisodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
         let assertionDescriptor = FetchDescriptor<UserAssertion>(
             predicate: #Predicate<UserAssertion> { assertion in
                 assertion.isActive
@@ -214,7 +213,30 @@ struct TimelineEngine {
         let assertions = try context.fetch(assertionDescriptor)
         let protectedEpisodeIDs = Set(assertions.compactMap(\.episodeID))
 
-        for episode in existingEpisodes where episode.kind != .stay {
+        let canonicalStays = try transitionBoundaryStays(covering: interval, in: context)
+        let candidatePairs: [(TimelineEpisode, TimelineEpisode)] = zip(
+            canonicalStays,
+            canonicalStays.dropFirst()
+        ).compactMap { pair in
+            guard let departure = pair.0.endDate else { return nil }
+            let nextArrival = pair.1.startDate
+            guard nextArrival.timeIntervalSince(departure) >= 60 else { return nil }
+            guard departure <= interval.end && nextArrival >= interval.start else { return nil }
+            return (pair.0, pair.1)
+        }
+
+        let earliestCandidateDeparture = candidatePairs.compactMap { $0.0.endDate }.min()
+        let latestCandidateArrival = candidatePairs.map { $0.1.startDate }.max()
+        let transitionSearchInterval = DateInterval(
+            start: min(interval.start, earliestCandidateDeparture ?? interval.start),
+            end: max(interval.end, latestCandidateArrival ?? interval.end)
+        )
+        let existingTransitions = try transitionEpisodes(
+            overlapping: transitionSearchInterval,
+            in: context
+        )
+
+        for episode in existingTransitions {
             guard !protectedEpisodeIDs.contains(episode.id) else { continue }
             let episodeEnd = episode.endDate ?? episode.startDate
             if episode.startDate <= interval.end && episodeEnd >= interval.start {
@@ -222,21 +244,12 @@ struct TimelineEngine {
             }
         }
 
-        // Suppression is a presentation concern. Hidden stays still define the
-        // canonical transition boundaries so rebuilding cannot bridge across
-        // them or rewrite the movement history on either side.
-        let canonicalStays = existingEpisodes
-            .filter { $0.kind == .stay }
-            .sorted { $0.startDate < $1.startDate }
-
-        for pair in zip(canonicalStays, canonicalStays.dropFirst()) {
+        for pair in candidatePairs {
             guard let departure = pair.0.endDate else { continue }
             let nextArrival = pair.1.startDate
-            guard nextArrival.timeIntervalSince(departure) >= 60 else { continue }
-            guard departure <= interval.end && nextArrival >= interval.start else { continue }
 
-            let protectedTransitionExists = existingEpisodes.contains { episode in
-                guard episode.kind != .stay, protectedEpisodeIDs.contains(episode.id) else { return false }
+            let protectedTransitionExists = existingTransitions.contains { episode in
+                guard protectedEpisodeIDs.contains(episode.id) else { return false }
                 let episodeEnd = episode.endDate ?? episode.startDate
                 return episode.startDate <= nextArrival && episodeEnd >= departure
             }
@@ -262,6 +275,70 @@ struct TimelineEngine {
         }
 
         try context.save()
+    }
+
+    private func transitionBoundaryStays(
+        covering interval: DateInterval,
+        in context: ModelContext
+    ) throws -> [TimelineEpisode] {
+        let stayRaw = EpisodeKind.stay.rawValue
+        let intervalStart = interval.start
+        let intervalEnd = interval.end
+
+        var previousDescriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.kindRaw == stayRaw && episode.startDate < intervalStart
+            },
+            sortBy: [SortDescriptor(\TimelineEpisode.startDate, order: .reverse)]
+        )
+        previousDescriptor.fetchLimit = 1
+
+        let intervalDescriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.kindRaw == stayRaw
+                    && episode.startDate >= intervalStart
+                    && episode.startDate <= intervalEnd
+            },
+            sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+        )
+
+        var nextDescriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.kindRaw == stayRaw && episode.startDate > intervalEnd
+            },
+            sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+        )
+        nextDescriptor.fetchLimit = 1
+
+        var staysByID: [UUID: TimelineEpisode] = [:]
+        for episode in try context.fetch(previousDescriptor) {
+            staysByID[episode.id] = episode
+        }
+        for episode in try context.fetch(intervalDescriptor) {
+            staysByID[episode.id] = episode
+        }
+        for episode in try context.fetch(nextDescriptor) {
+            staysByID[episode.id] = episode
+        }
+        return staysByID.values.sorted { $0.startDate < $1.startDate }
+    }
+
+    private func transitionEpisodes(
+        overlapping interval: DateInterval,
+        in context: ModelContext
+    ) throws -> [TimelineEpisode] {
+        let stayRaw = EpisodeKind.stay.rawValue
+        let distantFuture = Date.distantFuture
+        let intervalStart = interval.start
+        let intervalEnd = interval.end
+        let descriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.kindRaw != stayRaw
+                    && episode.startDate <= intervalEnd
+                    && (episode.endDate ?? distantFuture) >= intervalStart
+            }
+        )
+        return try context.fetch(descriptor)
     }
 
     private func recentVisitCandidates(
