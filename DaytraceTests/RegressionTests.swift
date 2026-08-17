@@ -550,7 +550,7 @@ final class RegressionTests: XCTestCase {
     }
 
     @MainActor
-    func testTargetedHistoricalRebuildSkipsSuppressedMiddleStay() throws {
+    func testTargetedHistoricalRebuildKeepsSuppressedMiddleStayAsTransitionBoundary() throws {
         let context = try makeContext()
         let firstDeparture = baseTime.addingTimeInterval(60 * 60)
         let middleArrival = baseTime.addingTimeInterval(2 * 60 * 60)
@@ -613,11 +613,13 @@ final class RegressionTests: XCTestCase {
             in: context
         )
 
-        let transitions = try context.fetch(FetchDescriptor<TimelineEpisode>()).filter { $0.kind != .stay }
-        XCTAssertEqual(transitions.count, 1)
-        XCTAssertEqual(transitions.first?.kind, .gap)
-        XCTAssertEqual(transitions.first?.startDate, firstDeparture)
-        XCTAssertEqual(transitions.first?.endDate, thirdArrival)
+        let transitions = try context.fetch(FetchDescriptor<TimelineEpisode>())
+            .filter { $0.kind != .stay }
+            .sorted { $0.startDate < $1.startDate }
+        XCTAssertEqual(transitions.count, 2)
+        XCTAssertEqual(transitions.map(\.kind), [.gap, .gap])
+        XCTAssertEqual(transitions.map(\.startDate), [firstDeparture, middleDeparture])
+        XCTAssertEqual(transitions.compactMap(\.endDate), [middleArrival, thirdArrival])
     }
 
     @MainActor
