@@ -796,6 +796,29 @@ enum HistoricalDayDataQuery {
         }
     }
 
+    static func suppressedEpisodeIDs(
+        among episodes: [TimelineEpisode],
+        context: ModelContext
+    ) -> Set<UUID> {
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        var suppressed: Set<UUID> = []
+        suppressed.reserveCapacity(episodes.count)
+
+        for episodeID in Set(episodes.map(\.id)) {
+            var descriptor = FetchDescriptor<UserAssertion>(
+                predicate: #Predicate<UserAssertion> { assertion in
+                    assertion.episodeID == episodeID
+                        && assertion.isActive
+                        && assertion.assertionTypeRaw == suppressRaw
+                }
+            )
+            descriptor.fetchLimit = 1
+            if (try? context.fetch(descriptor).isEmpty) == false {
+                suppressed.insert(episodeID)
+            }
+        }
+        return suppressed
+    }
 
 }
 
@@ -803,18 +826,43 @@ struct HistoricalDayDetailView: View {
     let day: CalendarDay
 
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
-    @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
-    @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
+    @Query private var episodes: [TimelineEpisode]
+    @Query private var journals: [JournalEntry]
+    @Query private var momentNotes: [MomentNote]
 
     @State private var selectedEpisodeID: UUID?
     @State private var dayRouteLocations: [LocationEvidence] = []
+    @State private var suppressedEpisodeIDs: Set<UUID> = []
     @State private var isMapExpanded = false
     @State private var stayEditSelection: HistoricalStayEditSelection?
 
-    private var suppressedEpisodeIDs: Set<UUID> {
-        TimelineVisibility.suppressedEpisodeIDs(from: assertions)
+    init(day: CalendarDay) {
+        self.day = day
+
+        let envelope = TimelineDayProjection.queryEnvelope(for: day)
+        let candidateStart = envelope.start
+        let candidateEnd = envelope.end
+        let farFuture = Date.distantFuture
+
+        _episodes = Query(
+            filter: #Predicate<TimelineEpisode> { episode in
+                episode.startDate < candidateEnd
+                    && (episode.endDate ?? farFuture) > candidateStart
+            },
+            sort: [SortDescriptor(\TimelineEpisode.startDate)]
+        )
+        _journals = Query(
+            filter: #Predicate<JournalEntry> { journal in
+                journal.dayAnchor >= candidateStart && journal.dayAnchor < candidateEnd
+            },
+            sort: [SortDescriptor(\JournalEntry.dayAnchor)]
+        )
+        _momentNotes = Query(
+            filter: #Predicate<MomentNote> { note in
+                note.timestamp >= candidateStart && note.timestamp < candidateEnd
+            },
+            sort: [SortDescriptor(\MomentNote.timestamp)]
+        )
     }
 
     private var dayEpisodes: [TimelineEpisode] {
@@ -940,6 +988,10 @@ struct HistoricalDayDetailView: View {
             } catch {
                 dayRouteLocations = []
             }
+            suppressedEpisodeIDs = HistoricalDayDataQuery.suppressedEpisodeIDs(
+                among: episodes,
+                context: modelContext
+            )
         }
     }
 
