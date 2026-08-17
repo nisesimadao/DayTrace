@@ -165,6 +165,108 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertEqual(Set(fetched.map(\.id)), expectedTargetIDs)
     }
 
+    func testHistoryDayIndexTreatsEpisodeEndAsExclusive() throws {
+        let timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: 2026,
+            month: 8,
+            day: 12,
+            hour: 23
+        )))
+        let end = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: 2026,
+            month: 8,
+            day: 13,
+            hour: 0
+        )))
+        let episode = TimelineEpisode(
+            kind: .stay,
+            startDate: start,
+            endDate: end,
+            title: "夜の滞在",
+            confidence: .high,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: timeZone.identifier
+        )
+        let august12 = CalendarDay(containing: start, timeZone: timeZone)
+        let august13 = CalendarDay(
+            containing: end.addingTimeInterval(12 * 60 * 60),
+            timeZone: timeZone
+        )
+
+        let indexed = HistoryDayIndex.episodeDays(
+            episodes: [episode],
+            among: [august12, august13],
+            openEndedAt: end
+        )
+
+        XCTAssertEqual(indexed, Set([august12]))
+    }
+
+    func testHistoryDayIndexRespectsDSTAndRecordedTimezone() throws {
+        let timeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: 2026,
+            month: 3,
+            day: 7,
+            hour: 23,
+            minute: 30
+        )))
+        let end = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: 2026,
+            month: 3,
+            day: 9,
+            hour: 0
+        )))
+        let episode = TimelineEpisode(
+            kind: .stay,
+            startDate: start,
+            endDate: end,
+            title: "DSTをまたぐ滞在",
+            confidence: .high,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: timeZone.identifier
+        )
+        let march7 = CalendarDay(containing: start, timeZone: timeZone)
+        let march8 = CalendarDay(
+            containing: try XCTUnwrap(calendar.date(from: DateComponents(
+                timeZone: timeZone,
+                year: 2026,
+                month: 3,
+                day: 8,
+                hour: 12
+            ))),
+            timeZone: timeZone
+        )
+        let march9 = CalendarDay(
+            containing: try XCTUnwrap(calendar.date(from: DateComponents(
+                timeZone: timeZone,
+                year: 2026,
+                month: 3,
+                day: 9,
+                hour: 12
+            ))),
+            timeZone: timeZone
+        )
+
+        let indexed = HistoryDayIndex.episodeDays(
+            episodes: [episode],
+            among: [march7, march8, march9],
+            openEndedAt: end
+        )
+
+        XCTAssertEqual(indexed, Set([march7, march8]))
+        XCTAssertEqual(end.timeIntervalSince(start), 23.5 * 60 * 60, accuracy: 1)
+    }
+
     func testCalendarMonthGridUsesMondayFirstStableSixWeekGrid() throws {
         let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
         var calendar = Calendar(identifier: .gregorian)
@@ -874,6 +976,94 @@ final class DayProjectionTests: XCTestCase {
             TimelineVisibility.suppressedEpisodeIDs(from: try context.fetch(FetchDescriptor<UserAssertion>())).isEmpty
         )
         XCTAssertEqual(try context.fetch(FetchDescriptor<TimelineEpisode>()).count, 2)
+    }
+
+    @MainActor
+    func testRecentRebuildDoesNotCreateTransitionFromStayPendingDeletion() throws {
+        let context = try makeContext()
+        let staleStay = TimelineEpisode(
+            kind: .stay,
+            startDate: baseTime,
+            endDate: baseTime.addingTimeInterval(60 * 60),
+            title: "消える滞在",
+            confidence: .low,
+            sourceVisitID: UUID(),
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(staleStay)
+        let currentVisit = insertVisit(
+            arrival: baseTime.addingTimeInterval(2 * 60 * 60),
+            departure: baseTime.addingTimeInterval(3 * 60 * 60),
+            observedAt: baseTime.addingTimeInterval(3 * 60 * 60),
+            in: context
+        )
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(
+            in: context,
+            now: baseTime.addingTimeInterval(4 * 60 * 60),
+            trackingSensitivity: .lowPower
+        )
+
+        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        XCTAssertFalse(episodes.contains { $0.id == staleStay.id })
+        XCTAssertEqual(episodes.filter { $0.kind == .stay }.map(\.sourceVisitID), [currentVisit.id])
+        XCTAssertTrue(episodes.allSatisfy { $0.kind == .stay })
+    }
+
+    @MainActor
+    func testMetadataOnlyStayEditPreservesExistingTransitionRows() throws {
+        let context = try makeContext()
+        let departure = baseTime.addingTimeInterval(60 * 60)
+        let nextArrival = baseTime.addingTimeInterval(2 * 60 * 60)
+        let first = TimelineEpisode(
+            kind: .stay,
+            startDate: baseTime,
+            endDate: departure,
+            title: "変更前",
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        let transition = TimelineEpisode(
+            kind: .move,
+            startDate: departure,
+            endDate: nextArrival,
+            title: "移動",
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        let second = TimelineEpisode(
+            kind: .stay,
+            startDate: nextArrival,
+            endDate: nextArrival.addingTimeInterval(60 * 60),
+            title: "次の滞在",
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(first)
+        context.insert(transition)
+        context.insert(second)
+        try context.save()
+
+        try TimelineEditingService().saveStay(
+            first,
+            title: "変更後",
+            startDate: first.startDate,
+            endDate: first.endDate,
+            confirmLocation: false,
+            in: context
+        )
+
+        let transitions = try context.fetch(FetchDescriptor<TimelineEpisode>())
+            .filter { $0.kind != .stay }
+        XCTAssertEqual(transitions.map(\.id), [transition.id])
+        XCTAssertEqual(transitions.first?.startDate, departure)
+        XCTAssertEqual(transitions.first?.endDate, nextArrival)
+        XCTAssertEqual(first.title, "変更後")
     }
 
     @MainActor

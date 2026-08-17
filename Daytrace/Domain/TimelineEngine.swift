@@ -79,7 +79,7 @@ struct TimelineEngine {
         }
 
         var stayByVisitID: [UUID: TimelineEpisode] = [:]
-        for episode in existingEpisodes where episode.kind == .stay {
+        for episode in existingEpisodes where episode.kind == .stay && !episode.isDeleted {
             if let sourceVisitID = episode.sourceVisitID {
                 stayByVisitID[sourceVisitID] = episode
             }

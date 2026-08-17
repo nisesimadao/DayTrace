@@ -2,6 +2,97 @@ import Foundation
 import SwiftData
 import SwiftUI
 
+enum HistoryDayIndex {
+    static func episodeDays(
+        episodes: [TimelineEpisode],
+        among candidateDays: [CalendarDay],
+        openEndedAt referenceDate: Date = .now
+    ) -> Set<CalendarDay> {
+        let targets = Set(candidateDays)
+        guard let firstTarget = targets.min(), let lastTarget = targets.max() else { return [] }
+
+        var result = Set<CalendarDay>()
+        for episode in episodes {
+            guard let coveredRange = coveredDayRange(for: episode, openEndedAt: referenceDate),
+                  coveredRange.lowerBound <= lastTarget,
+                  coveredRange.upperBound >= firstTarget else {
+                continue
+            }
+
+            for day in targets where day >= coveredRange.lowerBound && day <= coveredRange.upperBound {
+                result.insert(day)
+            }
+        }
+        return result
+    }
+
+    static func journalDays(
+        journals: [JournalEntry],
+        among candidateDays: [CalendarDay]
+    ) -> Set<CalendarDay> {
+        let targets = Set(candidateDays)
+        return Set(journals.lazy.map { TimelineDayProjection.day(for: $0) }.filter(targets.contains))
+    }
+
+    static func staysByDay(
+        episodes: [TimelineEpisode],
+        days: [CalendarDay],
+        openEndedAt referenceDate: Date = .now
+    ) -> [CalendarDay: [TimelineEpisode]] {
+        let targets = Set(days)
+        guard let firstTarget = targets.min(), let lastTarget = targets.max() else { return [:] }
+
+        var result: [CalendarDay: [TimelineEpisode]] = [:]
+        for episode in episodes where episode.kind == .stay {
+            guard let coveredRange = coveredDayRange(for: episode, openEndedAt: referenceDate),
+                  coveredRange.lowerBound <= lastTarget,
+                  coveredRange.upperBound >= firstTarget else {
+                continue
+            }
+
+            for day in days where day >= coveredRange.lowerBound && day <= coveredRange.upperBound {
+                result[day, default: []].append(episode)
+            }
+        }
+
+        for day in Array(result.keys) {
+            result[day]?.sort { $0.startDate < $1.startDate }
+        }
+        return result
+    }
+
+    static func journalsByDay(
+        journals: [JournalEntry],
+        days: [CalendarDay]
+    ) -> [CalendarDay: JournalEntry] {
+        let targets = Set(days)
+        var result: [CalendarDay: JournalEntry] = [:]
+        for journal in journals {
+            let day = TimelineDayProjection.day(for: journal)
+            guard targets.contains(day), result[day] == nil else { continue }
+            result[day] = journal
+        }
+        return result
+    }
+
+    private static func coveredDayRange(
+        for episode: TimelineEpisode,
+        openEndedAt referenceDate: Date
+    ) -> ClosedRange<CalendarDay>? {
+        let effectiveEnd = episode.endDate ?? referenceDate
+        guard effectiveEnd > episode.startDate else { return nil }
+
+        let zone = TimelineDayProjection.timeZone(identifier: episode.timeZoneIdentifier)
+        let startDay = CalendarDay(containing: episode.startDate, timeZone: zone)
+        let lastInstant = effectiveEnd.addingTimeInterval(-0.001)
+        let endDay = CalendarDay(
+            containing: max(lastInstant, episode.startDate),
+            timeZone: zone
+        )
+        return startDay...endDay
+    }
+}
+
 struct HistoryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(sort: \TimelineEpisode.startDate, order: .reverse) private var episodes: [TimelineEpisode]
@@ -295,6 +386,18 @@ private struct MonthGrid: View {
     }
 
     var body: some View {
+        let calendarDays = days.compactMap { date in
+            date.map { CalendarDay(containing: $0, timeZone: .current) }
+        }
+        let memoryDays = HistoryDayIndex.episodeDays(
+            episodes: episodes,
+            among: calendarDays
+        )
+        let journalDays = HistoryDayIndex.journalDays(
+            journals: journals,
+            among: calendarDays
+        )
+
         VStack(spacing: 9) {
             HStack {
                 ForEach(CalendarMonthGrid.weekdayTitles, id: \.self) { title in
@@ -312,8 +415,8 @@ private struct MonthGrid: View {
                         let day = CalendarDay(containing: date, timeZone: .current)
                         let cell = DayCell(
                             date: date,
-                            hasMemory: hasMemory(on: day),
-                            hasJournal: hasJournal(on: day)
+                            hasMemory: memoryDays.contains(day),
+                            hasJournal: journalDays.contains(day)
                         )
 
                         if day <= today {
@@ -335,13 +438,6 @@ private struct MonthGrid: View {
         }
     }
 
-    private func hasMemory(on day: CalendarDay) -> Bool {
-        episodes.contains { TimelineDayProjection.episode($0, intersects: day) }
-    }
-
-    private func hasJournal(on day: CalendarDay) -> Bool {
-        journals.contains { TimelineDayProjection.journal($0, belongsTo: day) }
-    }
 }
 
 private struct DayCell: View {
@@ -404,17 +500,21 @@ private struct RecentDaysList: View {
     }
 
     var body: some View {
+        let days = recentDays
+        let staysByDay = HistoryDayIndex.staysByDay(episodes: episodes, days: days)
+        let journalsByDay = HistoryDayIndex.journalsByDay(journals: journals, days: days)
+
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("最近の記録")
                     .font(.title3.bold())
                 Spacer()
-                Text("\(recentDays.count)日")
+                Text("\(days.count)日")
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
-            if recentDays.isEmpty {
+            if days.isEmpty {
                 ContentUnavailableView {
                     Label("まだ記録がありません", systemImage: "book.closed")
                 } description: {
@@ -425,16 +525,20 @@ private struct RecentDaysList: View {
                 .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
             } else {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(recentDays.enumerated()), id: \.element) { index, day in
+                    ForEach(Array(days.enumerated()), id: \.element) { index, day in
                         Button {
                             openDay(day)
                         } label: {
-                            RecentDayRow(day: day, episodes: episodes, journals: journals)
+                            RecentDayRow(
+                                day: day,
+                                stays: staysByDay[day] ?? [],
+                                journal: journalsByDay[day]
+                            )
                         }
                         .buttonStyle(.daytraceRowLink)
                         .hoverEffect(.highlight)
 
-                        if index < recentDays.count - 1 {
+                        if index < days.count - 1 {
                             Divider()
                                 .padding(.leading, 76)
                         }
@@ -448,21 +552,8 @@ private struct RecentDaysList: View {
 
 private struct RecentDayRow: View {
     let day: CalendarDay
-    let episodes: [TimelineEpisode]
-    let journals: [JournalEntry]
-
-    private var stays: [TimelineEpisode] {
-        episodes
-            .filter {
-                $0.kind == .stay
-                    && TimelineDayProjection.episode($0, intersects: day)
-            }
-            .sorted { $0.startDate < $1.startDate }
-    }
-
-    private var journal: JournalEntry? {
-        journals.first { TimelineDayProjection.journal($0, belongsTo: day) }
-    }
+    let stays: [TimelineEpisode]
+    let journal: JournalEntry?
 
     private var displayDate: Date? {
         day.date(in: .current)
@@ -810,10 +901,7 @@ struct HistoricalDayDetailView: View {
         .navigationTitle("この日")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $stayEditSelection) { selection in
-            StayEditorSheet(
-                episode: selection.episode,
-                rebuildHistoricalTransitions: true
-            )
+            StayEditorSheet(episode: selection.episode)
         }
         .fullScreenCover(isPresented: $isMapExpanded) {
             ExpandedDayMapView(

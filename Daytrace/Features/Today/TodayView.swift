@@ -642,7 +642,6 @@ private struct TrackingHealthBanner: View {
 
 struct StayEditorSheet: View {
     let episode: TimelineEpisode
-    let rebuildHistoricalTransitions: Bool
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -661,9 +660,8 @@ struct StayEditorSheet: View {
     @State private var selectedLongitude: Double
     @State private var selectedMergePlaceID: UUID?
 
-    init(episode: TimelineEpisode, rebuildHistoricalTransitions: Bool = false) {
+    init(episode: TimelineEpisode) {
         self.episode = episode
-        self.rebuildHistoricalTransitions = rebuildHistoricalTransitions
         _title = State(initialValue: episode.title == "未設定の場所" ? "" : episode.title)
         _startDate = State(initialValue: episode.startDate)
         _endDate = State(initialValue: episode.endDate ?? .now)
@@ -879,25 +877,21 @@ struct StayEditorSheet: View {
                 mergePlaceID: selectedMergePlaceID,
                 in: modelContext
             )
-            if rebuildHistoricalTransitions {
-                if timeWasEdited {
-                    var boundaryDates = [originalStart, startDate]
-                    if let originalEnd { boundaryDates.append(originalEnd) }
-                    if let proposedEndDate { boundaryDates.append(proposedEndDate) }
+            if timeWasEdited {
+                var boundaryDates = [originalStart, startDate]
+                if let originalEnd { boundaryDates.append(originalEnd) }
+                if let proposedEndDate { boundaryDates.append(proposedEndDate) }
 
-                    if let first = boundaryDates.min(), let last = boundaryDates.max() {
-                        let rebuildInterval = DateInterval(
-                            start: first.addingTimeInterval(-1),
-                            end: last.addingTimeInterval(1)
-                        )
-                        try TimelineEngine().rebuildTransitions(
-                            covering: rebuildInterval,
-                            in: modelContext
-                        )
-                    }
+                if let first = boundaryDates.min(), let last = boundaryDates.max() {
+                    let rebuildInterval = DateInterval(
+                        start: first.addingTimeInterval(-1),
+                        end: last.addingTimeInterval(1)
+                    )
+                    try TimelineEngine().rebuildTransitions(
+                        covering: rebuildInterval,
+                        in: modelContext
+                    )
                 }
-            } else {
-                try TimelineEngine().rebuildRecentTimeline(in: modelContext)
             }
             dismiss()
         } catch {
