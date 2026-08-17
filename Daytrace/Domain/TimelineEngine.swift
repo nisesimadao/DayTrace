@@ -29,7 +29,7 @@ struct TimelineEngine {
             in: context
         )
 
-        let allVisits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        let allVisits = try recentVisitCandidates(since: horizon, in: context)
         let inferredArrivalsByVisitID = inferredDepartureOnlyArrivals(
             for: allVisits,
             locations: locations,
@@ -45,7 +45,7 @@ struct TimelineEngine {
                     < visitStart($1, inferredArrivalsByVisitID: inferredArrivalsByVisitID)
             }
 
-        let existingEpisodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        let existingEpisodes = try recentEpisodeCandidates(since: horizon, in: context)
         let assertionDescriptor = FetchDescriptor<UserAssertion>(
             predicate: #Predicate<UserAssertion> { assertion in
                 assertion.isActive
@@ -264,6 +264,34 @@ struct TimelineEngine {
         try context.save()
     }
 
+    private func recentVisitCandidates(
+        since horizon: Date,
+        in context: ModelContext
+    ) throws -> [VisitEvidence] {
+        let distantFuture = Date.distantFuture
+        let descriptor = FetchDescriptor<VisitEvidence>(
+            predicate: #Predicate<VisitEvidence> { visit in
+                visit.observedAt >= horizon
+                    || (visit.departureDate ?? distantFuture) >= horizon
+            }
+        )
+        return try context.fetch(descriptor)
+    }
+
+    private func recentEpisodeCandidates(
+        since horizon: Date,
+        in context: ModelContext
+    ) throws -> [TimelineEpisode] {
+        let distantFuture = Date.distantFuture
+        let descriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.startDate >= horizon
+                    || (episode.endDate ?? distantFuture) >= horizon
+            }
+        )
+        return try context.fetch(descriptor)
+    }
+
     private func reconcile(
         _ episode: TimelineEpisode,
         with visit: VisitEvidence,
@@ -426,7 +454,7 @@ struct TimelineEngine {
             maximumAccuracy: trackingSensitivity.inferredStopMaximumAccuracy
         )
 
-        let existingVisits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        let existingVisits = try recentVisitCandidates(since: horizon, in: context)
         let realVisits = existingVisits.filter { $0.source != .inferredStop }
         let inferredVisits = existingVisits.filter {
             $0.source == .inferredStop
@@ -466,7 +494,7 @@ struct TimelineEngine {
     }
 
     private func deleteInferredVisits(since horizon: Date, in context: ModelContext) throws {
-        let visits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        let visits = try recentVisitCandidates(since: horizon, in: context)
         for visit in visits where visit.source == .inferredStop {
             let evidenceDate = visit.departureDate ?? visit.arrivalDate ?? visit.observedAt
             if evidenceDate >= horizon {

@@ -1272,6 +1272,85 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testRecentRebuildKeepsOngoingVisitThatStartedBeforeHorizon() throws {
+        let context = try makeContext()
+        let now = baseTime
+        let oldArrival = now.addingTimeInterval(-72 * 60 * 60)
+        let visit = insertVisit(
+            arrival: oldArrival,
+            departure: nil,
+            observedAt: oldArrival,
+            in: context
+        )
+        let existingStay = TimelineEpisode(
+            kind: .stay,
+            startDate: oldArrival,
+            endDate: nil,
+            title: "継続中の滞在",
+            latitude: visit.latitude,
+            longitude: visit.longitude,
+            confidence: .medium,
+            sourceVisitID: visit.id,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(existingStay)
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(
+            in: context,
+            now: now,
+            trackingSensitivity: .lowPower
+        )
+
+        let rebuilt = try stay(for: visit.id, in: context)
+        XCTAssertEqual(rebuilt.id, existingStay.id)
+        XCTAssertEqual(rebuilt.startDate, oldArrival)
+        XCTAssertNil(rebuilt.endDate)
+    }
+
+    @MainActor
+    func testRecentRebuildLeavesCompletedHistoryOutsideHorizonUntouched() throws {
+        let context = try makeContext()
+        let now = baseTime
+        let oldArrival = now.addingTimeInterval(-96 * 60 * 60)
+        let oldDeparture = now.addingTimeInterval(-95 * 60 * 60)
+        let visit = insertVisit(
+            arrival: oldArrival,
+            departure: oldDeparture,
+            observedAt: oldDeparture,
+            in: context
+        )
+        let stay = TimelineEpisode(
+            kind: .stay,
+            startDate: oldArrival,
+            endDate: oldDeparture,
+            title: "過去の確定滞在",
+            latitude: visit.latitude,
+            longitude: visit.longitude,
+            confidence: .high,
+            sourceVisitID: visit.id,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(stay)
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(
+            in: context,
+            now: now,
+            trackingSensitivity: .lowPower
+        )
+
+        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        let preserved = try XCTUnwrap(episodes.first { $0.id == stay.id })
+        XCTAssertEqual(preserved.title, "過去の確定滞在")
+        XCTAssertEqual(preserved.startDate, oldArrival)
+        XCTAssertEqual(preserved.endDate, oldDeparture)
+        XCTAssertEqual(preserved.confidence, .high)
+    }
+
+    @MainActor
     func testRecentRebuildUsesProtectedManualStayAsTransitionBoundary() throws {
         let context = try makeContext()
         let firstDeparture = baseTime.addingTimeInterval(60 * 60)
