@@ -540,16 +540,25 @@ struct TimelineEditingService {
     }
 
     func restoreAllSuppressed(in context: ModelContext) throws {
-        guard let assertions = try? context.fetch(FetchDescriptor<UserAssertion>()) else { return }
-        let suppressedIDs = Set(assertions.compactMap { assertion -> UUID? in
-            guard assertion.isActive, assertion.type == .suppress else { return nil }
-            assertion.isActive = false
-            return assertion.episodeID
-        })
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        let assertionDescriptor = FetchDescriptor<UserAssertion>(
+            predicate: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            }
+        )
+        guard let assertions = try? context.fetch(assertionDescriptor) else { return }
+        let suppressedIDs = Set(assertions.compactMap(\.episodeID))
 
         guard !suppressedIDs.isEmpty else { return }
-        let episodes = (try? context.fetch(FetchDescriptor<TimelineEpisode>())) ?? []
-        for episode in episodes where suppressedIDs.contains(episode.id) && episode.subtitle == "非表示" {
+        assertions.forEach { $0.isActive = false }
+
+        let episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.subtitle == "非表示"
+            }
+        )
+        let legacyEpisodes = (try? context.fetch(episodeDescriptor)) ?? []
+        for episode in legacyEpisodes where suppressedIDs.contains(episode.id) {
             episode.subtitle = nil
         }
         try context.save()

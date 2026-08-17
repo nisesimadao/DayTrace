@@ -9,12 +9,6 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(LocationRecorder.self) private var recorder
 
-    @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
-    @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
-    @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
-    @Query(sort: \PlaceRecord.name) private var places: [PlaceRecord]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
-
     @AppStorage("rawEvidenceRetentionDays") private var rawEvidenceRetentionDays = 90
     @AppStorage("appLockEnabled") private var appLockEnabled = false
 
@@ -29,20 +23,12 @@ struct SettingsView: View {
     @State private var selectedRawEvidenceRetentionDays: Int
     @State private var pendingRawEvidenceRetentionDays: Int?
     @State private var rawLocationCount = 0
+    @State private var suppressedCount = 0
 
     init() {
         _selectedRawEvidenceRetentionDays = State(
             initialValue: UserDefaults.standard.object(forKey: "rawEvidenceRetentionDays") as? Int ?? 90
         )
-    }
-
-    private var suppressedCount: Int {
-        TimelineVisibility.suppressedEpisodeIDs(from: assertions).count
-    }
-
-    private var visibleEpisodes: [TimelineEpisode] {
-        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
-        return episodes.filter { !suppressed.contains($0.id) }
     }
 
     private var appLockBinding: Binding<Bool> {
@@ -218,6 +204,7 @@ struct SettingsView: View {
             }
             .task {
                 refreshRawLocationCount()
+                refreshSuppressedCount()
             }
             .alert(
                 "古い生の位置データを削除しますか？",
@@ -243,6 +230,21 @@ struct SettingsView: View {
             let data: Data
             switch format {
             case .json:
+                let episodes = try modelContext.fetch(FetchDescriptor<TimelineEpisode>(
+                    sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+                ))
+                let journals = try modelContext.fetch(FetchDescriptor<JournalEntry>(
+                    sortBy: [SortDescriptor(\JournalEntry.dayAnchor)]
+                ))
+                let momentNotes = try modelContext.fetch(FetchDescriptor<MomentNote>(
+                    sortBy: [SortDescriptor(\MomentNote.timestamp)]
+                ))
+                let places = try modelContext.fetch(FetchDescriptor<PlaceRecord>(
+                    sortBy: [SortDescriptor(\PlaceRecord.name)]
+                ))
+                let assertions = try modelContext.fetch(FetchDescriptor<UserAssertion>(
+                    sortBy: [SortDescriptor(\UserAssertion.createdAt)]
+                ))
                 data = try DayTraceExportBuilder.json(
                     episodes: episodes,
                     journals: journals,
@@ -251,6 +253,23 @@ struct SettingsView: View {
                     assertions: assertions
                 )
             case .markdown:
+                let episodes = try modelContext.fetch(FetchDescriptor<TimelineEpisode>(
+                    sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+                ))
+                let journals = try modelContext.fetch(FetchDescriptor<JournalEntry>(
+                    sortBy: [SortDescriptor(\JournalEntry.dayAnchor)]
+                ))
+                let momentNotes = try modelContext.fetch(FetchDescriptor<MomentNote>(
+                    sortBy: [SortDescriptor(\MomentNote.timestamp)]
+                ))
+                let suppressRaw = UserAssertionType.suppress.rawValue
+                let assertionDescriptor = FetchDescriptor<UserAssertion>(
+                    predicate: #Predicate<UserAssertion> { assertion in
+                        assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+                    }
+                )
+                let suppressed = Set(try modelContext.fetch(assertionDescriptor).compactMap(\.episodeID))
+                let visibleEpisodes = episodes.filter { !suppressed.contains($0.id) }
                 data = Data(DayTraceExportBuilder.markdown(
                     episodes: visibleEpisodes,
                     journals: journals,
@@ -314,9 +333,21 @@ struct SettingsView: View {
         rawLocationCount = (try? modelContext.fetchCount(FetchDescriptor<LocationEvidence>())) ?? 0
     }
 
+    private func refreshSuppressedCount() {
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        let descriptor = FetchDescriptor<UserAssertion>(
+            predicate: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            }
+        )
+        let assertions = (try? modelContext.fetch(descriptor)) ?? []
+        suppressedCount = Set(assertions.compactMap(\.episodeID)).count
+    }
+
     private func restoreAllSuppressed() {
         do {
             try TimelineEditingService().restoreAllSuppressed(in: modelContext)
+            refreshSuppressedCount()
         } catch {
             privacyActionErrorMessage = error.localizedDescription
         }
