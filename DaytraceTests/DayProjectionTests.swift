@@ -68,6 +68,72 @@ final class DayProjectionTests: XCTestCase {
         }
     }
 
+    func testHistoricalDisplayIntervalClipsMultiDayEpisodeToRecordedCivilDay() throws {
+        let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let targetDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: 2026,
+            month: 8,
+            day: 15,
+            hour: 12
+        )))
+        let targetDay = CalendarDay(containing: targetDate, timeZone: timeZone)
+        let episode = TimelineEpisode(
+            kind: .stay,
+            startDate: try XCTUnwrap(calendar.date(from: DateComponents(
+                timeZone: timeZone, year: 2026, month: 8, day: 10, hour: 0, minute: 6
+            ))),
+            endDate: try XCTUnwrap(calendar.date(from: DateComponents(
+                timeZone: timeZone, year: 2026, month: 8, day: 15, hour: 7, minute: 25
+            ))),
+            title: "長期滞在",
+            confidence: .high,
+            timeZoneIdentifier: timeZone.identifier
+        )
+
+        let display = try XCTUnwrap(TimelineDayProjection.displayInterval(for: episode, on: targetDay))
+        let expectedStart = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: timeZone, year: 2026, month: 8, day: 15, hour: 0
+        )))
+
+        XCTAssertEqual(display.start, expectedStart)
+        XCTAssertEqual(display.end, episode.endDate)
+        XCTAssertEqual(display.duration, 7 * 60 * 60 + 25 * 60, accuracy: 0.1)
+    }
+
+    func testHistoricalDisplayIntervalUsesEpisodeRecordedTimezone() throws {
+        let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = losAngeles
+        let targetDate = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: losAngeles, year: 2026, month: 8, day: 12, hour: 12
+        )))
+        let targetDay = CalendarDay(containing: targetDate, timeZone: losAngeles)
+        let episode = TimelineEpisode(
+            kind: .move,
+            startDate: try XCTUnwrap(calendar.date(from: DateComponents(
+                timeZone: losAngeles, year: 2026, month: 8, day: 11, hour: 23
+            ))),
+            endDate: try XCTUnwrap(calendar.date(from: DateComponents(
+                timeZone: losAngeles, year: 2026, month: 8, day: 12, hour: 2
+            ))),
+            title: "移動",
+            confidence: .medium,
+            timeZoneIdentifier: losAngeles.identifier
+        )
+
+        let display = try XCTUnwrap(TimelineDayProjection.displayInterval(for: episode, on: targetDay))
+        let expectedStart = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: losAngeles, year: 2026, month: 8, day: 12, hour: 0
+        )))
+
+        XCTAssertEqual(display.start, expectedStart)
+        XCTAssertEqual(display.end, episode.endDate)
+        XCTAssertEqual(display.duration, 2 * 60 * 60, accuracy: 0.1)
+    }
+
     func testOngoingEpisodeDoesNotMarkFutureDay() throws {
         let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
         var calendar = Calendar(identifier: .gregorian)

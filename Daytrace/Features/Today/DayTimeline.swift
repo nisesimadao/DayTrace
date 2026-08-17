@@ -5,6 +5,7 @@ struct DayTimeline: View {
 
     let episodes: [TimelineEpisode]
     @Binding var selectedEpisodeID: UUID?
+    let displayDay: CalendarDay?
     let lastEvidenceAt: Date?
     let currentLocation: CurrentLocationContext?
     let connectsToCurrentLocation: Bool
@@ -16,6 +17,7 @@ struct DayTimeline: View {
     init(
         episodes: [TimelineEpisode],
         selectedEpisodeID: Binding<UUID?>,
+        displayDay: CalendarDay? = nil,
         lastEvidenceAt: Date?,
         currentLocation: CurrentLocationContext? = nil,
         connectsToCurrentLocation: Bool = false,
@@ -26,6 +28,7 @@ struct DayTimeline: View {
     ) {
         self.episodes = episodes
         _selectedEpisodeID = selectedEpisodeID
+        self.displayDay = displayDay
         self.lastEvidenceAt = lastEvidenceAt
         self.currentLocation = currentLocation
         self.connectsToCurrentLocation = connectsToCurrentLocation
@@ -40,6 +43,7 @@ struct DayTimeline: View {
             ForEach(Array(episodes.enumerated()), id: \.element.id) { index, episode in
                 TimelineEpisodeRow(
                     episode: episode,
+                    displayDay: displayDay,
                     mapSequenceNumber: mapSequenceNumbers[episode.id],
                     isSelected: selectedEpisodeID == episode.id,
                     drawsTopLine: index > 0,
@@ -82,6 +86,7 @@ struct DayTimeline: View {
 
 private struct TimelineEpisodeRow: View {
     let episode: TimelineEpisode
+    let displayDay: CalendarDay?
     let mapSequenceNumber: Int?
     let isSelected: Bool
     let drawsTopLine: Bool
@@ -93,6 +98,20 @@ private struct TimelineEpisodeRow: View {
     let onSelect: () -> Void
     let onEdit: () -> Void
     let onSuppress: () -> Void
+
+    private var displayInterval: DateInterval? {
+        guard let displayDay else { return nil }
+        return TimelineDayProjection.displayInterval(for: episode, on: displayDay)
+    }
+
+    private var displayStartDate: Date {
+        displayInterval?.start ?? episode.startDate
+    }
+
+    private var displayEndDate: Date? {
+        guard displayDay != nil else { return episode.endDate }
+        return displayInterval?.end
+    }
 
     private var canEdit: Bool {
         allowsEditing && episode.kind == .stay
@@ -137,7 +156,7 @@ private struct TimelineEpisodeRow: View {
 
     private var episodeContent: some View {
         HStack(alignment: .top, spacing: 13) {
-            Text(TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
+            Text(TimelineFormatting.clock(displayStartDate, timeZoneIdentifier: episode.timeZoneIdentifier))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 43, alignment: .trailing)
@@ -167,7 +186,7 @@ private struct TimelineEpisodeRow: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if let duration = TimelineFormatting.duration(from: episode.startDate, to: episode.endDate) {
+                if let duration = TimelineFormatting.duration(from: displayStartDate, to: displayEndDate) {
                     Text(duration)
                         .font(.caption)
                         .foregroundStyle(.secondary)

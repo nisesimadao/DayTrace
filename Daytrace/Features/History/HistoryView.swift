@@ -946,6 +946,7 @@ struct HistoricalDayDetailView: View {
                     DayTimeline(
                         episodes: dayEpisodes,
                         selectedEpisodeID: $selectedEpisodeID,
+                        displayDay: day,
                         lastEvidenceAt: nil,
                         allowsEditing: true,
                         allowsSuppression: false,

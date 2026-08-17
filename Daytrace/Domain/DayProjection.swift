@@ -172,6 +172,21 @@ enum TimelineDayProjection {
         self.day(for: journal) == day
     }
 
+    static func displayInterval(
+        for episode: TimelineEpisode,
+        on day: CalendarDay,
+        openEndedAt referenceDate: Date = .now
+    ) -> DateInterval? {
+        let zone = timeZone(identifier: episode.timeZoneIdentifier)
+        guard let dayDate = day.date(in: zone) else { return nil }
+        let dayInterval = DayInterval(containing: dayDate, timeZone: zone)
+        let effectiveEnd = episode.endDate ?? referenceDate
+        let displayStart = max(episode.startDate, dayInterval.start)
+        let displayEnd = min(effectiveEnd, dayInterval.end)
+        guard displayEnd > displayStart else { return nil }
+        return DateInterval(start: displayStart, end: displayEnd)
+    }
+
     static func coveredDays(
         by episode: TimelineEpisode,
         openEndedAt referenceDate: Date = .now,
