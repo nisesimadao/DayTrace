@@ -68,6 +68,15 @@ struct TimelineEngine {
                 return episodeID
             }
         })
+        let userControlledEndEpisodeIDs = Set(assertions.compactMap { assertion -> UUID? in
+            guard let episodeID = assertion.episodeID else { return nil }
+            switch assertion.type {
+            case .retime, .retimeEnd:
+                return episodeID
+            default:
+                return nil
+            }
+        })
         let currentVisitIDs = Set(visits.map(\.id))
 
         for episode in existingEpisodes where episode.startDate >= horizon && episode.kind != .stay {
@@ -166,6 +175,18 @@ struct TimelineEngine {
         let canonicalStays = canonicalStaysByID.values
             .filter { $0.startDate >= horizon || ($0.endDate ?? .distantFuture) >= horizon }
             .sorted { $0.startDate < $1.startDate }
+
+        for pair in zip(canonicalStays, canonicalStays.dropFirst()) {
+            let current = pair.0
+            let next = pair.1
+            if current.sourceVisitID == nil,
+               current.endDate == nil,
+               manualBoundaryEpisodeIDs.contains(current.id),
+               !userControlledEndEpisodeIDs.contains(current.id),
+               next.startDate > current.startDate {
+                current.endDate = next.startDate
+            }
+        }
 
         for pair in zip(canonicalStays, canonicalStays.dropFirst()) {
             guard let departure = pair.0.endDate else { continue }

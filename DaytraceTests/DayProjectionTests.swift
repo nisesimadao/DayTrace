@@ -1349,6 +1349,101 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testRecentRebuildClosesUneditedManualOngoingStayAtNextStayStart() throws {
+        let context = try makeContext()
+        let manualStart = baseTime.addingTimeInterval(30 * 60)
+        let nextArrival = baseTime.addingTimeInterval(2 * 60 * 60)
+        let nextDeparture = baseTime.addingTimeInterval(3 * 60 * 60)
+
+        let manualStay = TimelineEpisode(
+            kind: .stay,
+            startDate: manualStart,
+            endDate: nil,
+            title: "手動の滞在",
+            subtitle: "手動で追加",
+            latitude: 34.67,
+            longitude: 133.93,
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(manualStay)
+        context.insert(UserAssertion(
+            episodeID: manualStay.id,
+            type: .reposition,
+            replacementLatitude: 34.67,
+            replacementLongitude: 133.93
+        ))
+        _ = insertVisit(
+            arrival: nextArrival,
+            departure: nextDeparture,
+            observedAt: nextDeparture,
+            latitude: 34.68,
+            longitude: 133.94,
+            in: context
+        )
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(
+            in: context,
+            now: nextDeparture,
+            trackingSensitivity: .lowPower
+        )
+
+        XCTAssertEqual(manualStay.endDate, nextArrival)
+    }
+
+    @MainActor
+    func testRecentRebuildPreservesExplicitOngoingManualStayEndOverride() throws {
+        let context = try makeContext()
+        let manualStart = baseTime.addingTimeInterval(30 * 60)
+        let nextArrival = baseTime.addingTimeInterval(2 * 60 * 60)
+        let nextDeparture = baseTime.addingTimeInterval(3 * 60 * 60)
+
+        let manualStay = TimelineEpisode(
+            kind: .stay,
+            startDate: manualStart,
+            endDate: nil,
+            title: "手動の滞在",
+            subtitle: "手動で追加",
+            latitude: 34.67,
+            longitude: 133.93,
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(manualStay)
+        context.insert(UserAssertion(
+            episodeID: manualStay.id,
+            type: .reposition,
+            replacementLatitude: 34.67,
+            replacementLongitude: 133.93
+        ))
+        context.insert(UserAssertion(
+            episodeID: manualStay.id,
+            type: .retimeEnd,
+            replacementEnd: nil
+        ))
+        _ = insertVisit(
+            arrival: nextArrival,
+            departure: nextDeparture,
+            observedAt: nextDeparture,
+            latitude: 34.68,
+            longitude: 133.94,
+            in: context
+        )
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(
+            in: context,
+            now: nextDeparture,
+            trackingSensitivity: .lowPower
+        )
+
+        XCTAssertNil(manualStay.endDate)
+    }
+
+    @MainActor
     func testSuppressingMiddleStayKeepsTransitionsAndUndoRestoresVisibility() throws {
         let context = try makeContext()
         let firstDeparture = baseTime.addingTimeInterval(60 * 60)
