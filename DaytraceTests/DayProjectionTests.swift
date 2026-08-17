@@ -46,6 +46,125 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertFalse(tomorrow.intersects(start: episodeStart, end: nil, openEndedAt: now))
     }
 
+    @MainActor
+    func testHistoricalDayLocationQueryFetchesOnlyTargetTokyoDay() throws {
+        let context = try makeContext()
+        let timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let noon = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: 2026,
+            month: 8,
+            day: 12,
+            hour: 12
+        )))
+        let interval = DayInterval(containing: noon, timeZone: timeZone)
+
+        let previous = locationEvidence(at: interval.start.addingTimeInterval(-1))
+        let atStart = locationEvidence(at: interval.start)
+        let midday = locationEvidence(at: interval.start.addingTimeInterval(12 * 60 * 60))
+        let beforeEnd = locationEvidence(at: interval.end.addingTimeInterval(-0.001))
+        let atEnd = locationEvidence(at: interval.end)
+        for evidence in [previous, atStart, midday, beforeEnd, atEnd] {
+            context.insert(evidence)
+        }
+        try context.save()
+
+        let fetched = try HistoricalDayDataQuery.locationEvidence(in: interval, context: context)
+
+        XCTAssertEqual(fetched.map(\.id), [atStart.id, midday.id, beforeEnd.id])
+        XCTAssertFalse(fetched.contains { $0.id == previous.id })
+        XCTAssertFalse(fetched.contains { $0.id == atEnd.id })
+    }
+
+    @MainActor
+    func testHistoricalDayLocationQueryRespectsDSTDayLengths() throws {
+        let context = try makeContext()
+        let timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+
+        let springNoon = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: 2026,
+            month: 3,
+            day: 8,
+            hour: 12
+        )))
+        let fallNoon = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: 2026,
+            month: 11,
+            day: 1,
+            hour: 12
+        )))
+        let spring = DayInterval(containing: springNoon, timeZone: timeZone)
+        let fall = DayInterval(containing: fallNoon, timeZone: timeZone)
+        XCTAssertEqual(spring.end.timeIntervalSince(spring.start), 23 * 60 * 60, accuracy: 0.1)
+        XCTAssertEqual(fall.end.timeIntervalSince(fall.start), 25 * 60 * 60, accuracy: 0.1)
+
+        let springInside = locationEvidence(at: spring.end.addingTimeInterval(-1))
+        let springOutside = locationEvidence(at: spring.end)
+        let fallInside = locationEvidence(at: fall.end.addingTimeInterval(-1))
+        let fallOutside = locationEvidence(at: fall.end)
+        for evidence in [springInside, springOutside, fallInside, fallOutside] {
+            context.insert(evidence)
+        }
+        try context.save()
+
+        XCTAssertEqual(
+            try HistoricalDayDataQuery.locationEvidence(in: spring, context: context).map(\.id),
+            [springInside.id]
+        )
+        XCTAssertEqual(
+            try HistoricalDayDataQuery.locationEvidence(in: fall, context: context).map(\.id),
+            [fallInside.id]
+        )
+    }
+
+    @MainActor
+    func testHistoricalDayLocationQueryRemainsScopedWithLargeMultiDayFixture() throws {
+        let context = try makeContext()
+        let timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let targetNoon = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: timeZone,
+            year: 2026,
+            month: 8,
+            day: 12,
+            hour: 12
+        )))
+        let targetInterval = DayInterval(containing: targetNoon, timeZone: timeZone)
+        let targetDayIndex = 15
+        let days = 31
+        let samplesPerDay = 200
+        var expectedTargetIDs = Set<UUID>()
+
+        for dayIndex in 0..<days {
+            let dayStart = try XCTUnwrap(calendar.date(
+                byAdding: .day,
+                value: dayIndex - targetDayIndex,
+                to: targetInterval.start
+            ))
+            for sampleIndex in 0..<samplesPerDay {
+                let timestamp = dayStart.addingTimeInterval(Double(sampleIndex) * 4 * 60)
+                let evidence = locationEvidence(at: timestamp)
+                context.insert(evidence)
+                if dayIndex == targetDayIndex {
+                    expectedTargetIDs.insert(evidence.id)
+                }
+            }
+        }
+        try context.save()
+
+        let fetched = try HistoricalDayDataQuery.locationEvidence(in: targetInterval, context: context)
+
+        XCTAssertEqual(fetched.count, samplesPerDay)
+        XCTAssertEqual(Set(fetched.map(\.id)), expectedTargetIDs)
+    }
+
     func testCalendarMonthGridUsesMondayFirstStableSixWeekGrid() throws {
         let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
         var calendar = Calendar(identifier: .gregorian)
@@ -758,7 +877,7 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
-    func testSuppressingMiddleStayRebuildsTransitionAcrossIt() throws {
+    func testSuppressingMiddleStayKeepsTransitionsAndUndoRestoresVisibility() throws {
         let context = try makeContext()
         let firstDeparture = baseTime.addingTimeInterval(60 * 60)
         let middleArrival = baseTime.addingTimeInterval(2 * 60 * 60)
@@ -780,7 +899,7 @@ final class DayProjectionTests: XCTestCase {
             longitude: 133.93,
             in: context
         )
-        insertVisit(
+        let thirdVisit = insertVisit(
             arrival: thirdArrival,
             departure: thirdDeparture,
             observedAt: thirdDeparture,
@@ -788,24 +907,103 @@ final class DayProjectionTests: XCTestCase {
             longitude: 133.94,
             in: context
         )
+        let firstMovement = locationEvidence(
+            at: firstDeparture.addingTimeInterval(30 * 60),
+            latitude: 34.665,
+            longitude: 133.925,
+            speed: 8,
+            course: 45,
+            source: .significantChange
+        )
+        let secondMovement = locationEvidence(
+            at: middleDeparture.addingTimeInterval(30 * 60),
+            latitude: 34.675,
+            longitude: 133.935,
+            speed: 8,
+            course: 45,
+            source: .significantChange
+        )
+        context.insert(firstMovement)
+        context.insert(secondMovement)
         try context.save()
 
         let engine = TimelineEngine()
-        try engine.rebuildRecentTimeline(in: context, now: thirdDeparture)
-        let middleStay = try stay(for: middleVisit.id, in: context)
-        try TimelineEditingService().setSuppressed(
-            episodeID: middleStay.id,
-            suppressed: true,
-            in: context
+        try engine.rebuildRecentTimeline(
+            in: context,
+            now: thirdDeparture,
+            trackingSensitivity: .lowPower
         )
-        try engine.rebuildRecentTimeline(in: context, now: thirdDeparture)
 
-        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
-        let gaps = episodes.filter { $0.kind == .gap }
-        XCTAssertEqual(gaps.count, 1)
-        XCTAssertEqual(gaps.first?.startDate, firstDeparture)
-        XCTAssertEqual(gaps.first?.endDate, thirdArrival)
-        XCTAssertNotNil(try stay(for: firstVisit.id, in: context))
+        let firstStay = try stay(for: firstVisit.id, in: context)
+        let middleStay = try stay(for: middleVisit.id, in: context)
+        let thirdStay = try stay(for: thirdVisit.id, in: context)
+        let transitionsBeforeSuppress = try context.fetch(FetchDescriptor<TimelineEpisode>())
+            .filter { $0.kind != .stay }
+            .sorted { $0.startDate < $1.startDate }
+        XCTAssertEqual(transitionsBeforeSuppress.map(\.kind), [.move, .move])
+        XCTAssertEqual(transitionsBeforeSuppress.map(\.startDate), [firstDeparture, middleDeparture])
+        XCTAssertEqual(transitionsBeforeSuppress.compactMap(\.endDate), [middleArrival, thirdArrival])
+        let transitionIDsBeforeSuppress = transitionsBeforeSuppress.map(\.id)
+        let rawEvidenceIDsBeforeSuppress = Set(
+            try context.fetch(FetchDescriptor<LocationEvidence>()).map(\.id)
+        )
+
+        let editor = TimelineEditingService()
+        try editor.setSuppressed(episodeID: middleStay.id, suppressed: true, in: context)
+
+        let assertionsAfterSuppress = try context.fetch(FetchDescriptor<UserAssertion>())
+        let suppressedIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertionsAfterSuppress)
+        XCTAssertEqual(suppressedIDs, Set([middleStay.id]))
+        XCTAssertTrue(assertionsAfterSuppress.contains {
+            $0.episodeID == middleStay.id && $0.type == .suppress && $0.isActive
+        })
+
+        let episodesImmediatelyAfterSuppress = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        let visibleImmediatelyAfterSuppress = episodesImmediatelyAfterSuppress.filter { !suppressedIDs.contains($0.id) }
+        XCTAssertFalse(visibleImmediatelyAfterSuppress.contains { $0.id == middleStay.id })
+        XCTAssertTrue(visibleImmediatelyAfterSuppress.contains { $0.id == firstStay.id })
+        XCTAssertTrue(visibleImmediatelyAfterSuppress.contains { $0.id == thirdStay.id })
+
+        let transitionsImmediatelyAfterSuppress = episodesImmediatelyAfterSuppress
+            .filter { $0.kind != .stay }
+            .sorted { $0.startDate < $1.startDate }
+        XCTAssertEqual(transitionsImmediatelyAfterSuppress.map(\.id), transitionIDsBeforeSuppress)
+        XCTAssertEqual(transitionsImmediatelyAfterSuppress.map(\.startDate), [firstDeparture, middleDeparture])
+        XCTAssertEqual(transitionsImmediatelyAfterSuppress.compactMap(\.endDate), [middleArrival, thirdArrival])
+        XCTAssertEqual(
+            Set(try context.fetch(FetchDescriptor<LocationEvidence>()).map(\.id)),
+            rawEvidenceIDsBeforeSuppress
+        )
+
+        // A later automatic rebuild may regenerate transition rows, but the
+        // hidden stay must continue to define both canonical boundaries.
+        try engine.rebuildRecentTimeline(
+            in: context,
+            now: thirdDeparture,
+            trackingSensitivity: .lowPower
+        )
+        let transitionsAfterRebuild = try context.fetch(FetchDescriptor<TimelineEpisode>())
+            .filter { $0.kind != .stay }
+            .sorted { $0.startDate < $1.startDate }
+        XCTAssertEqual(transitionsAfterRebuild.map(\.kind), [.move, .move])
+        XCTAssertEqual(transitionsAfterRebuild.map(\.startDate), [firstDeparture, middleDeparture])
+        XCTAssertEqual(transitionsAfterRebuild.compactMap(\.endDate), [middleArrival, thirdArrival])
+
+        try editor.setSuppressed(episodeID: middleStay.id, suppressed: false, in: context)
+        let assertionsAfterUndo = try context.fetch(FetchDescriptor<UserAssertion>())
+        XCTAssertFalse(TimelineVisibility.suppressedEpisodeIDs(from: assertionsAfterUndo).contains(middleStay.id))
+        XCTAssertTrue(try context.fetch(FetchDescriptor<TimelineEpisode>()).contains { $0.id == middleStay.id })
+
+        let transitionsAfterUndo = try context.fetch(FetchDescriptor<TimelineEpisode>())
+            .filter { $0.kind != .stay }
+            .sorted { $0.startDate < $1.startDate }
+        XCTAssertEqual(transitionsAfterUndo.map(\.kind), [.move, .move])
+        XCTAssertEqual(transitionsAfterUndo.map(\.startDate), [firstDeparture, middleDeparture])
+        XCTAssertEqual(transitionsAfterUndo.compactMap(\.endDate), [middleArrival, thirdArrival])
+        XCTAssertEqual(
+            Set(try context.fetch(FetchDescriptor<LocationEvidence>()).map(\.id)),
+            rawEvidenceIDsBeforeSuppress
+        )
     }
 
     @MainActor

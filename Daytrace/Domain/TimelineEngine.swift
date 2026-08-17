@@ -54,7 +54,6 @@ struct TimelineEngine {
         }
 
         let activeAssertionEpisodeIDs = Set(assertionsByEpisode.keys)
-        let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
         let currentVisitIDs = Set(visits.map(\.id))
 
         for episode in existingEpisodes where episode.startDate >= horizon && episode.kind != .stay {
@@ -142,10 +141,7 @@ struct TimelineEngine {
         }
 
         let canonicalStays = stayByVisitID.values
-            .filter {
-                !suppressedEpisodeIDs.contains($0.id)
-                    && ($0.startDate >= horizon || ($0.endDate ?? .distantFuture) >= horizon)
-            }
+            .filter { $0.startDate >= horizon || ($0.endDate ?? .distantFuture) >= horizon }
             .sorted { $0.startDate < $1.startDate }
 
         for pair in zip(canonicalStays, canonicalStays.dropFirst()) {
@@ -168,7 +164,6 @@ struct TimelineEngine {
         let existingEpisodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
         let assertions = try context.fetch(FetchDescriptor<UserAssertion>()).filter { $0.isActive }
         let protectedEpisodeIDs = Set(assertions.compactMap(\.episodeID))
-        let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
 
         for episode in existingEpisodes where episode.kind != .stay {
             guard !protectedEpisodeIDs.contains(episode.id) else { continue }
@@ -178,8 +173,11 @@ struct TimelineEngine {
             }
         }
 
+        // Suppression is a presentation concern. Hidden stays still define the
+        // canonical transition boundaries so rebuilding cannot bridge across
+        // them or rewrite the movement history on either side.
         let canonicalStays = existingEpisodes
-            .filter { $0.kind == .stay && !suppressedEpisodeIDs.contains($0.id) }
+            .filter { $0.kind == .stay }
             .sorted { $0.startDate < $1.startDate }
 
         for pair in zip(canonicalStays, canonicalStays.dropFirst()) {

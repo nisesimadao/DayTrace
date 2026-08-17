@@ -288,7 +288,6 @@ struct TodayView: View {
                 suppressed: true,
                 in: modelContext
             )
-            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
             if selectedEpisodeID == episode.id {
                 selectedEpisodeID = nil
             }
@@ -402,7 +401,6 @@ struct TodayView: View {
                 suppressed: false,
                 in: modelContext
             )
-            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
             undoSuppressedEpisodeID = nil
         } catch {
             timelineErrorMessage = error.localizedDescription

@@ -666,16 +666,40 @@ private struct SearchDayRow: View {
     }
 }
 
+@MainActor
+enum HistoricalDayDataQuery {
+    static func locationEvidence(
+        in interval: DayInterval,
+        context: ModelContext
+    ) throws -> [LocationEvidence] {
+        let start = interval.start
+        let end = interval.end
+        let descriptor = FetchDescriptor<LocationEvidence>(
+            predicate: #Predicate<LocationEvidence> { evidence in
+                evidence.timestamp >= start && evidence.timestamp < end
+            },
+            sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
+        )
+        return try context.fetch(descriptor)
+    }
+}
+
+private struct HistoricalDayRouteQueryKey: Hashable {
+    let start: Date
+    let end: Date
+}
+
 struct HistoricalDayDetailView: View {
     let day: CalendarDay
 
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
     @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
-    @Query(sort: \LocationEvidence.timestamp) private var locationEvidence: [LocationEvidence]
 
     @State private var selectedEpisodeID: UUID?
+    @State private var dayRouteLocations: [LocationEvidence] = []
     @State private var isMapExpanded = false
     @State private var stayEditSelection: HistoricalStayEditSelection?
 
@@ -800,15 +824,22 @@ struct HistoricalDayDetailView: View {
                 selectedEpisodeID: $selectedEpisodeID
             )
         }
+        .task(id: HistoricalDayRouteQueryKey(start: interval.start, end: interval.end)) {
+            do {
+                dayRouteLocations = try HistoricalDayDataQuery.locationEvidence(
+                    in: interval,
+                    context: modelContext
+                )
+            } catch {
+                dayRouteLocations = []
+            }
+        }
     }
 
     private func showExpandedMap() {
         isMapExpanded = true
     }
 
-    private var dayRouteLocations: [LocationEvidence] {
-        locationEvidence.filter { $0.timestamp >= interval.start && $0.timestamp < interval.end }
-    }
 }
 
 private struct HistoricalStayEditSelection: Identifiable {
