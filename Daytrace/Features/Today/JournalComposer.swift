@@ -453,10 +453,17 @@ struct JournalEditingService {
     ) throws -> JournalEntry? {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         let targetDay = CalendarDay(containing: day.start, timeZone: day.timeZone)
-        let allJournals = try context.fetch(FetchDescriptor<JournalEntry>())
-        let matchingJournals = allJournals
+        let envelope = TimelineDayProjection.queryEnvelope(for: targetDay)
+        let candidateStart = envelope.start
+        let candidateEnd = envelope.end
+        let journalDescriptor = FetchDescriptor<JournalEntry>(
+            predicate: #Predicate<JournalEntry> { journal in
+                journal.dayAnchor >= candidateStart && journal.dayAnchor < candidateEnd
+            },
+            sortBy: [SortDescriptor(\JournalEntry.createdAt)]
+        )
+        let matchingJournals = try context.fetch(journalDescriptor)
             .filter { TimelineDayProjection.day(for: $0) == targetDay }
-            .sorted { $0.createdAt < $1.createdAt }
 
         let preferredJournal = existingJournal.flatMap { existing in
             matchingJournals.first { $0.id == existing.id }
@@ -511,9 +518,18 @@ struct JournalEditingService {
         fallback: DayInterval,
         in context: ModelContext
     ) throws -> DayInterval {
-        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>(
+        let envelope = TimelineDayProjection.queryEnvelope(for: day)
+        let candidateStart = envelope.start
+        let candidateEnd = envelope.end
+        let farFuture = Date.distantFuture
+        let episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.startDate < candidateEnd
+                    && (episode.endDate ?? farFuture) > candidateStart
+            },
             sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
-        ))
+        )
+        let episodes = try context.fetch(episodeDescriptor)
         if let episode = episodes.first(where: {
             TimelineDayProjection.episode($0, intersects: day)
         }) {
@@ -524,9 +540,13 @@ struct JournalEditingService {
             )
         }
 
-        let notes = try context.fetch(FetchDescriptor<MomentNote>(
+        let noteDescriptor = FetchDescriptor<MomentNote>(
+            predicate: #Predicate<MomentNote> { note in
+                note.timestamp >= candidateStart && note.timestamp < candidateEnd
+            },
             sortBy: [SortDescriptor(\MomentNote.timestamp)]
-        ))
+        )
+        let notes = try context.fetch(noteDescriptor)
         if let note = notes.first(where: {
             let zone = TimelineDayProjection.timeZone(identifier: $0.timeZoneIdentifier)
             return CalendarDay(containing: $0.timestamp, timeZone: zone) == day

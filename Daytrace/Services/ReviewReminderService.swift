@@ -40,11 +40,25 @@ enum ReviewReminderService {
             return
         }
 
-        let journals = try context.fetch(FetchDescriptor<JournalEntry>())
+        let calendar = Calendar.current
+        let firstDay = CalendarDay(containing: now, timeZone: calendar.timeZone)
+        let lastDate = calendar.date(
+            byAdding: .day,
+            value: schedulingHorizonDays - 1,
+            to: now
+        ) ?? now
+        let lastDay = CalendarDay(containing: lastDate, timeZone: calendar.timeZone)
+        let candidateStart = TimelineDayProjection.queryEnvelope(for: firstDay).start
+        let candidateEnd = TimelineDayProjection.queryEnvelope(for: lastDay).end
+        let journalDescriptor = FetchDescriptor<JournalEntry>(
+            predicate: #Predicate<JournalEntry> { journal in
+                journal.dayAnchor >= candidateStart && journal.dayAnchor < candidateEnd
+            }
+        )
+        let journals = try context.fetch(journalDescriptor)
         let completedDays = Set(journals.map { TimelineDayProjection.day(for: $0) })
         let hour = storedHour
         let minute = storedMinute
-        let calendar = Calendar.current
 
         await cancelAllManaged()
 

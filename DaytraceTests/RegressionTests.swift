@@ -300,6 +300,40 @@ final class RegressionTests: XCTestCase {
     }
 
     @MainActor
+    func testJournalSaveMatchesExistingEntryByRecordedCivilDayAcrossTimezones() throws {
+        let context = try makeContext()
+        let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        let tokyoZone = try XCTUnwrap(TimeZone(identifier: tokyo))
+        let targetDay = CalendarDayComponents(2026, 8, 12)
+        let losAngelesDate = try XCTUnwrap(targetDay.date(in: losAngeles))
+        let losAngelesInterval = DayInterval(containing: losAngelesDate, timeZone: losAngeles)
+        let existing = JournalEntry(
+            dayAnchor: losAngelesInterval.start,
+            body: "旅先で書いた日記",
+            createdAt: losAngelesInterval.start.addingTimeInterval(60),
+            updatedAt: losAngelesInterval.start.addingTimeInterval(60),
+            timeZoneIdentifier: losAngeles.identifier
+        )
+        context.insert(existing)
+        try context.save()
+
+        let tokyoDate = try XCTUnwrap(targetDay.date(in: tokyoZone))
+        let fallbackDay = DayInterval(containing: tokyoDate, timeZone: tokyoZone)
+        let result = try JournalEditingService().save(
+            day: fallbackDay,
+            body: "更新後",
+            existingJournal: nil,
+            in: context,
+            now: losAngelesInterval.start.addingTimeInterval(120)
+        )
+
+        XCTAssertEqual(result?.id, existing.id)
+        XCTAssertEqual(result?.body, "更新後")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<JournalEntry>()).count, 1)
+        XCTAssertEqual(TimelineDayProjection.day(for: try XCTUnwrap(result)), targetDay)
+    }
+
+    @MainActor
     func testMomentNoteOnlyHistoricalJournalUsesNoteTimezone() throws {
         let context = try makeContext()
         let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
