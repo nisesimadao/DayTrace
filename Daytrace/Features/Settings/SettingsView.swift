@@ -14,7 +14,6 @@ struct SettingsView: View {
     @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
     @Query(sort: \PlaceRecord.name) private var places: [PlaceRecord]
     @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
-    @Query(sort: \LocationEvidence.timestamp) private var locations: [LocationEvidence]
 
     @AppStorage("rawEvidenceRetentionDays") private var rawEvidenceRetentionDays = 90
     @AppStorage("appLockEnabled") private var appLockEnabled = false
@@ -29,6 +28,7 @@ struct SettingsView: View {
     @State private var isHistoryDeletionConfirmationPresented = false
     @State private var selectedRawEvidenceRetentionDays: Int
     @State private var pendingRawEvidenceRetentionDays: Int?
+    @State private var rawLocationCount = 0
 
     init() {
         _selectedRawEvidenceRetentionDays = State(
@@ -147,12 +147,12 @@ struct SettingsView: View {
                         } label: {
                             Label("GPX 生位置データ", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
                         }
-                        .disabled(locations.isEmpty)
+                        .disabled(rawLocationCount == 0)
                     } label: {
                         Label("書き出す", systemImage: "square.and.arrow.up")
                     }
 
-                    Text("JSONはTimeline・場所・日記・修正履歴を保存します。Markdownは読み返し用です。GPXには現在保持している生の位置データ（\(locations.count)点）が含まれます。")
+                    Text("JSONはTimeline・場所・日記・修正履歴を保存します。Markdownは読み返し用です。GPXには現在保持している生の位置データ（\(rawLocationCount)点）が含まれます。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -216,6 +216,9 @@ struct SettingsView: View {
             } message: {
                 Text(privacyActionErrorMessage ?? "")
             }
+            .task {
+                refreshRawLocationCount()
+            }
             .alert(
                 "古い生の位置データを削除しますか？",
                 isPresented: Binding(
@@ -254,6 +257,10 @@ struct SettingsView: View {
                     momentNotes: momentNotes
                 ).utf8)
             case .gpx:
+                let descriptor = FetchDescriptor<LocationEvidence>(
+                    sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
+                )
+                let locations = try modelContext.fetch(descriptor)
                 data = Data(DayTraceExportBuilder.gpx(locations: locations).utf8)
             }
 
@@ -269,6 +276,7 @@ struct SettingsView: View {
     private func deleteLocationHistory() {
         do {
             try recorder.deleteLocationHistoryKeepingJournal()
+            refreshRawLocationCount()
         } catch {
             privacyActionErrorMessage = error.localizedDescription
         }
@@ -290,6 +298,7 @@ struct SettingsView: View {
             try recorder.applyRetentionPolicy(days: days)
             rawEvidenceRetentionDays = days
             selectedRawEvidenceRetentionDays = days
+            refreshRawLocationCount()
         } catch {
             selectedRawEvidenceRetentionDays = rawEvidenceRetentionDays
             privacyActionErrorMessage = error.localizedDescription
@@ -301,10 +310,13 @@ struct SettingsView: View {
         selectedRawEvidenceRetentionDays = rawEvidenceRetentionDays
     }
 
+    private func refreshRawLocationCount() {
+        rawLocationCount = (try? modelContext.fetchCount(FetchDescriptor<LocationEvidence>())) ?? 0
+    }
+
     private func restoreAllSuppressed() {
         do {
             try TimelineEditingService().restoreAllSuppressed(in: modelContext)
-            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
         } catch {
             privacyActionErrorMessage = error.localizedDescription
         }

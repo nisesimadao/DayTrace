@@ -46,7 +46,12 @@ struct TimelineEngine {
             }
 
         let existingEpisodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
-        let assertions = try context.fetch(FetchDescriptor<UserAssertion>()).filter { $0.isActive }
+        let assertionDescriptor = FetchDescriptor<UserAssertion>(
+            predicate: #Predicate<UserAssertion> { assertion in
+                assertion.isActive
+            }
+        )
+        let assertions = try context.fetch(assertionDescriptor)
         var assertionsByEpisode: [UUID: [UserAssertion]] = [:]
         for assertion in assertions {
             guard let episodeID = assertion.episodeID else { continue }
@@ -162,7 +167,12 @@ struct TimelineEngine {
 
     func rebuildTransitions(covering interval: DateInterval, in context: ModelContext) throws {
         let existingEpisodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
-        let assertions = try context.fetch(FetchDescriptor<UserAssertion>()).filter { $0.isActive }
+        let assertionDescriptor = FetchDescriptor<UserAssertion>(
+            predicate: #Predicate<UserAssertion> { assertion in
+                assertion.isActive
+            }
+        )
+        let assertions = try context.fetch(assertionDescriptor)
         let protectedEpisodeIDs = Set(assertions.compactMap(\.episodeID))
 
         for episode in existingEpisodes where episode.kind != .stay {
