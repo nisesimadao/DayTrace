@@ -1272,6 +1272,83 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testRecentRebuildUsesProtectedManualStayAsTransitionBoundary() throws {
+        let context = try makeContext()
+        let firstDeparture = baseTime.addingTimeInterval(60 * 60)
+        let manualArrival = baseTime.addingTimeInterval(90 * 60)
+        let manualDeparture = baseTime.addingTimeInterval(2 * 60 * 60)
+        let secondArrival = baseTime.addingTimeInterval(3 * 60 * 60)
+        let secondDeparture = baseTime.addingTimeInterval(4 * 60 * 60)
+
+        _ = insertVisit(
+            arrival: baseTime,
+            departure: firstDeparture,
+            observedAt: firstDeparture,
+            in: context
+        )
+        _ = insertVisit(
+            arrival: secondArrival,
+            departure: secondDeparture,
+            observedAt: secondDeparture,
+            latitude: 34.68,
+            longitude: 133.94,
+            in: context
+        )
+
+        let manualStay = TimelineEpisode(
+            kind: .stay,
+            startDate: manualArrival,
+            endDate: manualDeparture,
+            title: "手動の滞在",
+            subtitle: "手動で追加",
+            latitude: 34.67,
+            longitude: 133.93,
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(manualStay)
+        context.insert(UserAssertion(
+            episodeID: manualStay.id,
+            type: .reposition,
+            replacementLatitude: 34.67,
+            replacementLongitude: 133.93
+        ))
+        context.insert(locationEvidence(
+            at: firstDeparture.addingTimeInterval(15 * 60),
+            latitude: 34.665,
+            longitude: 133.925,
+            speed: 8,
+            course: 45,
+            source: .significantChange
+        ))
+        context.insert(locationEvidence(
+            at: manualDeparture.addingTimeInterval(30 * 60),
+            latitude: 34.675,
+            longitude: 133.935,
+            speed: 8,
+            course: 45,
+            source: .significantChange
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildRecentTimeline(
+            in: context,
+            now: secondDeparture,
+            trackingSensitivity: .lowPower
+        )
+
+        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        XCTAssertTrue(episodes.contains { $0.id == manualStay.id })
+        let transitions = episodes
+            .filter { $0.kind != .stay }
+            .sorted { $0.startDate < $1.startDate }
+        XCTAssertEqual(transitions.map(\.kind), [.move, .move])
+        XCTAssertEqual(transitions.map(\.startDate), [firstDeparture, manualDeparture])
+        XCTAssertEqual(transitions.compactMap(\.endDate), [manualArrival, secondArrival])
+    }
+
+    @MainActor
     func testSuppressingMiddleStayKeepsTransitionsAndUndoRestoresVisibility() throws {
         let context = try makeContext()
         let firstDeparture = baseTime.addingTimeInterval(60 * 60)

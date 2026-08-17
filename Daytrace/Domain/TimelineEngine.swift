@@ -59,6 +59,15 @@ struct TimelineEngine {
         }
 
         let activeAssertionEpisodeIDs = Set(assertionsByEpisode.keys)
+        let manualBoundaryEpisodeIDs = Set(assertions.compactMap { assertion -> UUID? in
+            guard let episodeID = assertion.episodeID else { return nil }
+            switch assertion.type {
+            case .confirm, .automaticPlaceSuggestion:
+                return nil
+            default:
+                return episodeID
+            }
+        })
         let currentVisitIDs = Set(visits.map(\.id))
 
         for episode in existingEpisodes where episode.startDate >= horizon && episode.kind != .stay {
@@ -145,7 +154,16 @@ struct TimelineEngine {
             }
         }
 
-        let canonicalStays = stayByVisitID.values
+        var canonicalStaysByID = Dictionary(
+            uniqueKeysWithValues: stayByVisitID.values.map { ($0.id, $0) }
+        )
+        for episode in existingEpisodes
+        where episode.kind == .stay
+            && !episode.isDeleted
+            && manualBoundaryEpisodeIDs.contains(episode.id) {
+            canonicalStaysByID[episode.id] = episode
+        }
+        let canonicalStays = canonicalStaysByID.values
             .filter { $0.startDate >= horizon || ($0.endDate ?? .distantFuture) >= horizon }
             .sorted { $0.startDate < $1.startDate }
 
