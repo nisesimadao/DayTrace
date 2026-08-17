@@ -124,6 +124,106 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoricalDayLocationQueryUsesEachEvidenceRecordedTimezone() throws {
+        let context = try makeContext()
+        let tokyo = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        var tokyoCalendar = Calendar(identifier: .gregorian)
+        tokyoCalendar.timeZone = tokyo
+        var losAngelesCalendar = Calendar(identifier: .gregorian)
+        losAngelesCalendar.timeZone = losAngeles
+
+        let targetDate = try XCTUnwrap(tokyoCalendar.date(from: DateComponents(
+            timeZone: tokyo,
+            year: 2026,
+            month: 8,
+            day: 12,
+            hour: 12
+        )))
+        let targetDay = CalendarDay(containing: targetDate, timeZone: tokyo)
+        let tokyoInsideDate = try XCTUnwrap(tokyoCalendar.date(from: DateComponents(
+            timeZone: tokyo,
+            year: 2026,
+            month: 8,
+            day: 12,
+            hour: 0,
+            minute: 30
+        )))
+        let losAngelesInsideDate = try XCTUnwrap(losAngelesCalendar.date(from: DateComponents(
+            timeZone: losAngeles,
+            year: 2026,
+            month: 8,
+            day: 12,
+            hour: 23,
+            minute: 30
+        )))
+        let tokyoOutsideDate = try XCTUnwrap(tokyoCalendar.date(from: DateComponents(
+            timeZone: tokyo,
+            year: 2026,
+            month: 8,
+            day: 13,
+            hour: 0
+        )))
+        let losAngelesOutsideDate = try XCTUnwrap(losAngelesCalendar.date(from: DateComponents(
+            timeZone: losAngeles,
+            year: 2026,
+            month: 8,
+            day: 11,
+            hour: 23,
+            minute: 59
+        )))
+
+        let tokyoInside = LocationEvidence(
+            timestamp: tokyoInsideDate,
+            latitude: 35.68,
+            longitude: 139.76,
+            horizontalAccuracy: 20,
+            speed: 0,
+            course: 0,
+            source: .standardLocation,
+            timeZoneIdentifier: tokyo.identifier
+        )
+        let losAngelesInside = LocationEvidence(
+            timestamp: losAngelesInsideDate,
+            latitude: 34.05,
+            longitude: -118.24,
+            horizontalAccuracy: 20,
+            speed: 0,
+            course: 0,
+            source: .standardLocation,
+            timeZoneIdentifier: losAngeles.identifier
+        )
+        let tokyoOutside = LocationEvidence(
+            timestamp: tokyoOutsideDate,
+            latitude: 35.68,
+            longitude: 139.76,
+            horizontalAccuracy: 20,
+            speed: 0,
+            course: 0,
+            source: .standardLocation,
+            timeZoneIdentifier: tokyo.identifier
+        )
+        let losAngelesOutside = LocationEvidence(
+            timestamp: losAngelesOutsideDate,
+            latitude: 34.05,
+            longitude: -118.24,
+            horizontalAccuracy: 20,
+            speed: 0,
+            course: 0,
+            source: .standardLocation,
+            timeZoneIdentifier: losAngeles.identifier
+        )
+        for evidence in [tokyoInside, losAngelesInside, tokyoOutside, losAngelesOutside] {
+            context.insert(evidence)
+        }
+        try context.save()
+
+        let fetched = try HistoricalDayDataQuery.locationEvidence(on: targetDay, context: context)
+
+        XCTAssertEqual(Set(fetched.map(\.id)), Set([tokyoInside.id, losAngelesInside.id]))
+    }
+
+    @MainActor
     func testHistoricalDayLocationQueryRemainsScopedWithLargeMultiDayFixture() throws {
         let context = try makeContext()
         let timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))

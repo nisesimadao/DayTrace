@@ -665,8 +665,10 @@ private struct HistorySearchResults: View {
     }
 
     var body: some View {
+        let searchResults = results
+
         LazyVStack(alignment: .leading, spacing: 18) {
-            if results.isEmpty {
+            if searchResults.isEmpty {
                 ContentUnavailableView {
                     Label("見つかりませんでした", systemImage: "magnifyingglass")
                 } description: {
@@ -675,11 +677,11 @@ private struct HistorySearchResults: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 70)
             } else {
-                Text("\(results.count)日の記録")
+                Text("\(searchResults.count)日の記録")
                     .font(.headline)
                     .padding(.top, 12)
 
-                ForEach(results) { result in
+                ForEach(searchResults) { result in
                     Button {
                         openDay(result.day)
                     } label: {
@@ -773,11 +775,52 @@ enum HistoricalDayDataQuery {
         )
         return try context.fetch(descriptor)
     }
-}
 
-private struct HistoricalDayRouteQueryKey: Hashable {
-    let start: Date
-    let end: Date
+    static func locationEvidence(
+        on day: CalendarDay,
+        context: ModelContext
+    ) throws -> [LocationEvidence] {
+        let envelope = queryEnvelope(for: day)
+        let start = envelope.start
+        let end = envelope.end
+        let descriptor = FetchDescriptor<LocationEvidence>(
+            predicate: #Predicate<LocationEvidence> { evidence in
+                evidence.timestamp >= start && evidence.timestamp < end
+            },
+            sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
+        )
+
+        return try context.fetch(descriptor).filter { evidence in
+            let zone = TimelineDayProjection.timeZone(identifier: evidence.timeZoneIdentifier)
+            return CalendarDay(containing: evidence.timestamp, timeZone: zone) == day
+        }
+    }
+
+    private static func queryEnvelope(for day: CalendarDay) -> DateInterval {
+        var earliestStart = Date.distantFuture
+        var latestEnd = Date.distantPast
+        var didResolveInterval = false
+
+        var timeZones = TimeZone.knownTimeZoneIdentifiers.compactMap(TimeZone.init(identifier:))
+        timeZones.append(.current)
+
+        for zone in timeZones {
+            guard let date = day.date(in: zone) else { continue }
+            let interval = DayInterval(containing: date, timeZone: zone)
+            earliestStart = min(earliestStart, interval.start)
+            latestEnd = max(latestEnd, interval.end)
+            didResolveInterval = true
+        }
+
+        if didResolveInterval, latestEnd > earliestStart {
+            return DateInterval(start: earliestStart, end: latestEnd)
+        }
+
+        let fallbackZone = TimeZone.current
+        let fallbackDate = day.date(in: fallbackZone) ?? .now
+        let fallback = DayInterval(containing: fallbackDate, timeZone: fallbackZone)
+        return DateInterval(start: fallback.start, end: fallback.end)
+    }
 }
 
 struct HistoricalDayDetailView: View {
@@ -912,10 +955,10 @@ struct HistoricalDayDetailView: View {
                 selectedEpisodeID: $selectedEpisodeID
             )
         }
-        .task(id: HistoricalDayRouteQueryKey(start: interval.start, end: interval.end)) {
+        .task(id: day) {
             do {
                 dayRouteLocations = try HistoricalDayDataQuery.locationEvidence(
-                    in: interval,
+                    on: day,
                     context: modelContext
                 )
             } catch {
