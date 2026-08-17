@@ -173,6 +173,7 @@ struct HistoryPlacesMap: View {
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 40)
             }
+            .daytraceFloatingTabBarScrollClearance()
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
         }
     }

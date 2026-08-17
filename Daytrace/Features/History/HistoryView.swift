@@ -145,6 +145,7 @@ struct HistoryView: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
+        .daytraceFloatingTabBarScrollClearance()
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .searchable(
             text: $searchText,
@@ -310,36 +311,27 @@ private struct MonthHeader: View {
     }
 
     private var monthTitle: some View {
-        VStack(spacing: 1) {
-            Image(systemName: "chevron.up")
-                .font(.caption.bold())
-                .foregroundStyle(.tertiary)
-            Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
-                .font(.title2.bold())
-                .multilineTextAlignment(.center)
-                .contentTransition(.numericText())
-            Image(systemName: "chevron.down")
-                .font(.caption.bold())
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, minHeight: 44)
-        .contentShape(Rectangle())
-        .simultaneousGesture(monthSwipeGesture)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
-        .accessibilityHint("上下にスワイプして月を変更できます")
-        .accessibilityAdjustableAction { direction in
-            switch direction {
-            case .increment:
-                shiftMonth(1)
-            case .decrement:
-                shiftMonth(-1)
-            @unknown default:
-                break
+        Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
+            .font(.title2.bold())
+            .multilineTextAlignment(.center)
+            .contentTransition(.numericText())
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .contentShape(Rectangle())
+            .simultaneousGesture(monthSwipeGesture)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
+            .accessibilityHint("左右にスワイプして月を変更できます")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment:
+                    shiftMonth(1)
+                case .decrement:
+                    shiftMonth(-1)
+                @unknown default:
+                    break
+                }
             }
-        }
     }
-
     private var previousMonthButton: some View {
         Button("前月", systemImage: "chevron.left") { shiftMonth(-1) }
             .font(.caption.weight(.semibold))
@@ -364,8 +356,8 @@ private struct MonthHeader: View {
             .onEnded { value in
                 let horizontalDistance = abs(value.translation.width)
                 let verticalDistance = abs(value.translation.height)
-                guard verticalDistance > horizontalDistance, verticalDistance >= 24 else { return }
-                shiftMonth(value.translation.height < 0 ? 1 : -1)
+                guard horizontalDistance > verticalDistance, horizontalDistance >= 24 else { return }
+                shiftMonth(value.translation.width < 0 ? 1 : -1)
             }
     }
 }
@@ -966,6 +958,7 @@ struct HistoricalDayDetailView: View {
             .padding(.horizontal, DS.horizontalPadding)
             .padding(.bottom, 40)
         }
+        .daytraceFloatingTabBarScrollClearance()
         .navigationTitle("この日")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $stayEditSelection) { selection in

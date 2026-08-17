@@ -219,6 +219,7 @@ struct TodayView: View {
             .padding(.horizontal, DS.horizontalPadding)
             .padding(.bottom, 40)
         }
+        .daytraceFloatingTabBarScrollClearance()
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: recorder.health == .healthy)
         .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: hasMapContent)
@@ -484,17 +485,31 @@ private struct TodayHeader: View {
     let episodes: [TimelineEpisode]
     let openSettings: () -> Void
 
+    private var settingsButton: some View {
+        Button("設定", systemImage: "gearshape", action: openSettings)
+            .font(.subheadline.weight(.semibold))
+            .frame(minHeight: 44)
+            .buttonStyle(.daytraceGlass)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                DaytraceWordmark(markSize: 29)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    DaytraceWordmark(markSize: 29)
 
-                Spacer()
+                    Spacer()
 
-                Button("設定", systemImage: "gearshape", action: openSettings)
-                    .font(.subheadline.weight(.semibold))
-                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                    .buttonStyle(.daytraceGlass)
+                    settingsButton
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    DaytraceWordmark(markSize: 29)
+                    HStack {
+                        Spacer()
+                        settingsButton
+                    }
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
