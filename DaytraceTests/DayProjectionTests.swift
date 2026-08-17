@@ -31,6 +31,43 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertFalse(interval.intersects(start: start, end: nil))
     }
 
+    func testQueryEnvelopeContainsRecordedTimezoneDayIntervals() throws {
+        let utc = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = utc
+        let targetDays = try [
+            DateComponents(year: 2026, month: 3, day: 8, hour: 12),
+            DateComponents(year: 2026, month: 8, day: 12, hour: 12),
+            DateComponents(year: 2026, month: 11, day: 1, hour: 12)
+        ].map { components in
+            CalendarDay(
+                containing: try XCTUnwrap(calendar.date(from: components)),
+                timeZone: utc
+            )
+        }
+
+        for day in targetDays {
+            let envelope = TimelineDayProjection.queryEnvelope(for: day)
+            for identifier in TimeZone.knownTimeZoneIdentifiers {
+                guard let timeZone = TimeZone(identifier: identifier),
+                      let date = day.date(in: timeZone) else {
+                    continue
+                }
+                let interval = DayInterval(containing: date, timeZone: timeZone)
+                XCTAssertLessThanOrEqual(
+                    envelope.start,
+                    interval.start,
+                    "Envelope starts too late for \(identifier) on \(day)"
+                )
+                XCTAssertGreaterThanOrEqual(
+                    envelope.end,
+                    interval.end,
+                    "Envelope ends too early for \(identifier) on \(day)"
+                )
+            }
+        }
+    }
+
     func testOngoingEpisodeDoesNotMarkFutureDay() throws {
         let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
         var calendar = Calendar(identifier: .gregorian)

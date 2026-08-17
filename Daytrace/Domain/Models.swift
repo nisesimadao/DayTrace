@@ -400,10 +400,25 @@ struct TimelineEditingService {
         } ?? false
 
         if startChanged || endChanged {
-            let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+            let farFuture = Date.distantFuture
+            let proposedEnd = endDate ?? farFuture
+            let stayRaw = EpisodeKind.stay.rawValue
+            let episodeID = episode.id
+            let episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+                predicate: #Predicate<TimelineEpisode> { candidate in
+                    candidate.id != episodeID
+                        && candidate.kindRaw == stayRaw
+                        && candidate.startDate < proposedEnd
+                        && (candidate.endDate ?? farFuture) > startDate
+                },
+                sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+            )
+            let episodes = try context.fetch(episodeDescriptor)
+
+            let suppressRaw = UserAssertionType.suppress.rawValue
             let assertionDescriptor = FetchDescriptor<UserAssertion>(
                 predicate: #Predicate<UserAssertion> { assertion in
-                    assertion.isActive
+                    assertion.isActive && assertion.assertionTypeRaw == suppressRaw
                 }
             )
             let assertions = try context.fetch(assertionDescriptor)

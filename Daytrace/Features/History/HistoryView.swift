@@ -780,7 +780,7 @@ enum HistoricalDayDataQuery {
         on day: CalendarDay,
         context: ModelContext
     ) throws -> [LocationEvidence] {
-        let envelope = queryEnvelope(for: day)
+        let envelope = TimelineDayProjection.queryEnvelope(for: day)
         let start = envelope.start
         let end = envelope.end
         let descriptor = FetchDescriptor<LocationEvidence>(
@@ -796,31 +796,7 @@ enum HistoricalDayDataQuery {
         }
     }
 
-    private static func queryEnvelope(for day: CalendarDay) -> DateInterval {
-        var earliestStart = Date.distantFuture
-        var latestEnd = Date.distantPast
-        var didResolveInterval = false
 
-        var timeZones = TimeZone.knownTimeZoneIdentifiers.compactMap(TimeZone.init(identifier:))
-        timeZones.append(.current)
-
-        for zone in timeZones {
-            guard let date = day.date(in: zone) else { continue }
-            let interval = DayInterval(containing: date, timeZone: zone)
-            earliestStart = min(earliestStart, interval.start)
-            latestEnd = max(latestEnd, interval.end)
-            didResolveInterval = true
-        }
-
-        if didResolveInterval, latestEnd > earliestStart {
-            return DateInterval(start: earliestStart, end: latestEnd)
-        }
-
-        let fallbackZone = TimeZone.current
-        let fallbackDate = day.date(in: fallbackZone) ?? .now
-        let fallback = DayInterval(containing: fallbackDate, timeZone: fallbackZone)
-        return DateInterval(start: fallback.start, end: fallback.end)
-    }
 }
 
 struct HistoricalDayDetailView: View {
