@@ -4,14 +4,27 @@ import SwiftUI
 import UIKit
 
 struct TodayView: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let day = DayInterval(containing: context.date, timeZone: .current)
+            let dayKey = CalendarDay(containing: context.date, timeZone: .current)
+            TodayDayView(day: day)
+                .id(dayKey)
+        }
+    }
+}
+
+private struct TodayDayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openURL) private var openURL
     @Environment(LocationRecorder.self) private var recorder
-    @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
-    @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
+    @Query private var episodes: [TimelineEpisode]
+    @Query private var journals: [JournalEntry]
+    @Query private var assertions: [UserAssertion]
     @Query private var places: [PlaceRecord]
+
+    let day: DayInterval
 
     @State private var selectedEpisodeID: UUID?
     @State private var isSettingsPresented: Bool
@@ -23,7 +36,34 @@ struct TodayView: View {
     @State private var locationSnapshot = TodayLocationSnapshot.empty
     @State private var lastLocationSnapshotRefresh: Date?
 
-    init() {
+    init(day: DayInterval) {
+        self.day = day
+
+        let dayStart = day.start
+        let dayEnd = day.end
+        let distantFuture = Date.distantFuture
+        let suppressRaw = UserAssertionType.suppress.rawValue
+
+        _episodes = Query(
+            filter: #Predicate<TimelineEpisode> { episode in
+                episode.startDate < dayEnd
+                    && (episode.endDate ?? distantFuture) > dayStart
+            },
+            sort: \TimelineEpisode.startDate
+        )
+        _journals = Query(
+            filter: #Predicate<JournalEntry> { journal in
+                journal.dayAnchor >= dayStart && journal.dayAnchor < dayEnd
+            },
+            sort: \JournalEntry.dayAnchor
+        )
+        _assertions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+
 #if DEBUG
         _isSettingsPresented = State(
             initialValue: ProcessInfo.processInfo.environment["DAYTRACE_SHOW_SETTINGS"] == "1"
@@ -31,10 +71,6 @@ struct TodayView: View {
 #else
         _isSettingsPresented = State(initialValue: false)
 #endif
-    }
-
-    private var day: DayInterval {
-        DayInterval(containing: .now, timeZone: .current)
     }
 
     private var suppressedEpisodeIDs: Set<UUID> {
@@ -219,6 +255,7 @@ struct TodayView: View {
             .padding(.horizontal, DS.horizontalPadding)
             .padding(.bottom, 40)
         }
+        .daytraceFloatingTabBarScrollClearance()
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: recorder.health == .healthy)
         .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: hasMapContent)
@@ -288,7 +325,6 @@ struct TodayView: View {
                 suppressed: true,
                 in: modelContext
             )
-            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
             if selectedEpisodeID == episode.id {
                 selectedEpisodeID = nil
             }
@@ -402,7 +438,6 @@ struct TodayView: View {
                 suppressed: false,
                 in: modelContext
             )
-            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
             undoSuppressedEpisodeID = nil
         } catch {
             timelineErrorMessage = error.localizedDescription
@@ -486,17 +521,31 @@ private struct TodayHeader: View {
     let episodes: [TimelineEpisode]
     let openSettings: () -> Void
 
+    private var settingsButton: some View {
+        Button("設定", systemImage: "gearshape", action: openSettings)
+            .font(.subheadline.weight(.semibold))
+            .frame(minHeight: 44)
+            .buttonStyle(.daytraceGlass)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                DaytraceWordmark(markSize: 29)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    DaytraceWordmark(markSize: 29)
 
-                Spacer()
+                    Spacer()
 
-                Button("設定", systemImage: "gearshape", action: openSettings)
-                    .font(.subheadline.weight(.semibold))
-                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                    .buttonStyle(.daytraceGlass)
+                    settingsButton
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    DaytraceWordmark(markSize: 29)
+                    HStack {
+                        Spacer()
+                        settingsButton
+                    }
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -644,14 +693,14 @@ private struct TrackingHealthBanner: View {
 
 struct StayEditorSheet: View {
     let episode: TimelineEpisode
-    let rebuildHistoricalTransitions: Bool
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \TimelineEpisode.startDate) private var allEpisodes: [TimelineEpisode]
-    @Query(sort: \UserAssertion.createdAt) private var allAssertions: [UserAssertion]
+    @Query private var allEpisodes: [TimelineEpisode]
+    @Query private var allAssertions: [UserAssertion]
     @Query(sort: \PlaceRecord.name) private var allPlaces: [PlaceRecord]
 
+    @State private var kind: EpisodeKind
     @State private var title: String
     @State private var startDate: Date
     @State private var endDate: Date
@@ -663,10 +712,26 @@ struct StayEditorSheet: View {
     @State private var selectedLongitude: Double
     @State private var selectedMergePlaceID: UUID?
 
-    init(episode: TimelineEpisode, rebuildHistoricalTransitions: Bool = false) {
+    init(episode: TimelineEpisode) {
         self.episode = episode
-        self.rebuildHistoricalTransitions = rebuildHistoricalTransitions
-        _title = State(initialValue: episode.title == "未設定の場所" ? "" : episode.title)
+
+        let stayRaw = EpisodeKind.stay.rawValue
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        _allEpisodes = Query(
+            filter: #Predicate<TimelineEpisode> { candidate in
+                candidate.kindRaw == stayRaw
+            },
+            sort: \TimelineEpisode.startDate
+        )
+        _allAssertions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+
+        _kind = State(initialValue: episode.kind)
+        _title = State(initialValue: episode.kind == .move || episode.title == "未設定の場所" ? "" : episode.title)
         _startDate = State(initialValue: episode.startDate)
         _endDate = State(initialValue: episode.endDate ?? .now)
         _isOngoing = State(initialValue: episode.endDate == nil)
@@ -675,7 +740,7 @@ struct StayEditorSheet: View {
     }
 
     private var originalDisplayTitle: String {
-        episode.title == "未設定の場所" ? "" : episode.title
+        episode.kind == .move || episode.title == "未設定の場所" ? "" : episode.title
     }
 
     private var trimmedTitle: String {
@@ -728,7 +793,7 @@ struct StayEditorSheet: View {
     }
 
     private var intervalValidationError: TimelineEditingError? {
-        guard hasEditedTime else { return nil }
+        guard kind == .stay, hasEditedTime || episode.kind != .stay else { return nil }
         return StayIntervalValidator.validationError(
             episodeID: episode.id,
             startDate: startDate,
@@ -741,7 +806,20 @@ struct StayEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("場所") {
+                Section {
+                    Picker("種類", selection: $kind) {
+                        Text("滞在").tag(EpisodeKind.stay)
+                        Text("移動").tag(EpisodeKind.move)
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("この区間は？")
+                } footer: {
+                    Text("誤判定を直すと、次回の位置情報の再解析後もこの修正を優先します。")
+                }
+
+                if kind == .stay {
+                    Section("場所") {
                     TextField("場所の名前", text: $title)
                         .textInputAutocapitalization(.never)
 
@@ -763,9 +841,10 @@ struct StayEditorSheet: View {
                         Toggle("この場所として覚える", isOn: $shouldConfirmLocation)
                             .disabled(trimmedTitle.isEmpty)
                     }
+                    }
                 }
 
-                if !mergeCandidates.isEmpty {
+                if kind == .stay && !mergeCandidates.isEmpty {
                     Section {
                         Picker("結合先", selection: $selectedMergePlaceID) {
                             Text("結合しない").tag(UUID?.none)
@@ -784,6 +863,7 @@ struct StayEditorSheet: View {
                     }
                 }
 
+                if kind == .stay {
                 Section {
                     DatePicker("到着", selection: $startDate)
                     Toggle("まだここにいる", isOn: $isOngoing)
@@ -801,6 +881,18 @@ struct StayEditorSheet: View {
                         Text("ここで直した内容は、位置情報を再解析しても優先して残します。")
                     }
                 }
+                } else {
+                    Section {
+                        LabeledContent("開始", value: TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
+                        if let endDate = episode.endDate {
+                            LabeledContent("終了", value: TimelineFormatting.clock(endDate, timeZoneIdentifier: episode.timeZoneIdentifier))
+                        }
+                    } header: {
+                        Text("移動")
+                    } footer: {
+                        Text("滞在から移動へ直すと、前後の移動区間もまとめて1本の移動として整理します。")
+                    }
+                }
             }
             .navigationDestination(isPresented: $isLocationEditorPresented) {
                 if let originalLatitude = episode.latitude,
@@ -814,7 +906,7 @@ struct StayEditorSheet: View {
                     )
                 }
             }
-            .navigationTitle("滞在を修正")
+            .navigationTitle(kind == .stay ? "滞在を修正" : "移動を修正")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -870,36 +962,40 @@ struct StayEditorSheet: View {
         let timeWasEdited = hasEditedTime
 
         do {
-            try TimelineEditingService().saveStay(
-                episode,
-                title: title,
-                startDate: startDate,
-                endDate: proposedEndDate,
-                latitude: hasEditableCoordinate ? selectedLatitude : nil,
-                longitude: hasEditableCoordinate ? selectedLongitude : nil,
-                confirmLocation: shouldApplyConfirmation,
-                mergePlaceID: selectedMergePlaceID,
-                in: modelContext
-            )
-            if rebuildHistoricalTransitions {
-                if timeWasEdited {
-                    var boundaryDates = [originalStart, startDate]
-                    if let originalEnd { boundaryDates.append(originalEnd) }
-                    if let proposedEndDate { boundaryDates.append(proposedEndDate) }
+            let editor = TimelineEditingService()
+            let kindWasEdited = kind != episode.kind
+            if kindWasEdited {
+                try editor.reclassify(episode, as: kind, in: modelContext)
+            }
 
-                    if let first = boundaryDates.min(), let last = boundaryDates.max() {
-                        let rebuildInterval = DateInterval(
-                            start: first.addingTimeInterval(-1),
-                            end: last.addingTimeInterval(1)
-                        )
-                        try TimelineEngine().rebuildTransitions(
-                            covering: rebuildInterval,
-                            in: modelContext
-                        )
-                    }
+            if kind == .stay {
+                try editor.saveStay(
+                    episode,
+                    title: title,
+                    startDate: startDate,
+                    endDate: proposedEndDate,
+                    latitude: hasEditableCoordinate ? selectedLatitude : nil,
+                    longitude: hasEditableCoordinate ? selectedLongitude : nil,
+                    confirmLocation: shouldApplyConfirmation,
+                    mergePlaceID: selectedMergePlaceID,
+                    in: modelContext
+                )
+            }
+            if kind == .stay && (timeWasEdited || kindWasEdited) {
+                var boundaryDates = [originalStart, startDate]
+                if let originalEnd { boundaryDates.append(originalEnd) }
+                if let proposedEndDate { boundaryDates.append(proposedEndDate) }
+
+                if let first = boundaryDates.min(), let last = boundaryDates.max() {
+                    let rebuildInterval = DateInterval(
+                        start: first.addingTimeInterval(-1),
+                        end: last.addingTimeInterval(1)
+                    )
+                    try TimelineEngine().rebuildTransitions(
+                        covering: rebuildInterval,
+                        in: modelContext
+                    )
                 }
-            } else {
-                try TimelineEngine().rebuildRecentTimeline(in: modelContext)
             }
             dismiss()
         } catch {

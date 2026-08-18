@@ -44,16 +44,35 @@ struct HistoryPlacesMap: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @Query(sort: \PlaceRecord.name) private var places: [PlaceRecord]
-    @Query(sort: \TimelineEpisode.startDate, order: .reverse) private var episodes: [TimelineEpisode]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
+    @Query private var episodes: [TimelineEpisode]
+    @Query private var suppressions: [UserAssertion]
 
     @State private var selectedPlaceID: UUID?
     @State private var position: MapCameraPosition = .automatic
 
     let openDay: (CalendarDay) -> Void
 
+    init(openDay: @escaping (CalendarDay) -> Void) {
+        self.openDay = openDay
+        let stayRaw = EpisodeKind.stay.rawValue
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        _episodes = Query(
+            filter: #Predicate<TimelineEpisode> { episode in
+                episode.kindRaw == stayRaw && episode.placeID != nil
+            },
+            sort: \TimelineEpisode.startDate,
+            order: .reverse
+        )
+        _suppressions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+    }
+
     private var visibleEpisodes: [TimelineEpisode] {
-        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
+        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: suppressions)
         return episodes.filter { !suppressed.contains($0.id) }
     }
 
@@ -173,6 +192,7 @@ struct HistoryPlacesMap: View {
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 40)
             }
+            .daytraceFloatingTabBarScrollClearance()
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
         }
     }

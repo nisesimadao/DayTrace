@@ -19,19 +19,28 @@ enum AutomaticPlaceSuggestionService {
         defer { isAnnotating = false }
 
         let horizon = now.addingTimeInterval(-recentWindow)
-        guard let episodes = try? context.fetch(FetchDescriptor<TimelineEpisode>()),
-              let assertions = try? context.fetch(FetchDescriptor<UserAssertion>()) else {
+        let episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.startDate >= horizon
+            }
+        )
+        let assertionDescriptor = FetchDescriptor<UserAssertion>(
+            predicate: #Predicate<UserAssertion> { assertion in
+                assertion.isActive
+            }
+        )
+        guard let episodes = try? context.fetch(episodeDescriptor),
+              let assertions = try? context.fetch(assertionDescriptor) else {
             return
         }
 
         let activeAssertionsByEpisode = activeAssertionsByEpisode(from: assertions)
         let candidates = episodes
             .filter {
-                $0.startDate >= horizon
-                    && shouldRequestSuggestion(
-                        for: $0,
-                        activeAssertions: activeAssertionsByEpisode[$0.id] ?? []
-                    )
+                shouldRequestSuggestion(
+                    for: $0,
+                    activeAssertions: activeAssertionsByEpisode[$0.id] ?? []
+                )
             }
             .sorted { $0.startDate > $1.startDate }
             .prefix(maximumSuggestionsPerPass)
@@ -71,8 +80,13 @@ enum AutomaticPlaceSuggestionService {
             return
         }
 
-        guard let assertions = try? context.fetch(FetchDescriptor<UserAssertion>()) else { return }
-        let activeAssertions = assertions.filter { $0.episodeID == episode.id && $0.isActive }
+        let episodeID = episode.id
+        let descriptor = FetchDescriptor<UserAssertion>(
+            predicate: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.episodeID == episodeID
+            }
+        )
+        guard let activeAssertions = try? context.fetch(descriptor) else { return }
         guard shouldRequestSuggestion(for: episode, activeAssertions: activeAssertions) else {
             return
         }

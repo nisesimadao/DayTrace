@@ -130,4 +130,13 @@ extension View {
             self
         }
     }
+
+    @ViewBuilder
+    func daytraceFloatingTabBarScrollClearance() -> some View {
+        if #available(iOS 26.0, *) {
+            self.contentMargins(.bottom, 64, for: .scrollContent)
+        } else {
+            self
+        }
+    }
 }

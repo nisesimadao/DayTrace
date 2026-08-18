@@ -292,6 +292,7 @@ enum UserAssertionType: String, Codable, Hashable, Sendable {
     case retimeStart
     case retimeEnd
     case reposition
+    case reclassify
     case suppress
     case mergeStay
     case splitStay
@@ -372,9 +373,17 @@ struct TimelineEditingService {
         in context: ModelContext
     ) throws {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
-        let mergePlace = mergePlaceID.flatMap { mergePlaceID in
-            places.first { $0.id == mergePlaceID }
+        let mergePlace: PlaceRecord?
+        if let mergePlaceID {
+            var descriptor = FetchDescriptor<PlaceRecord>(
+                predicate: #Predicate<PlaceRecord> { place in
+                    place.id == mergePlaceID
+                }
+            )
+            descriptor.fetchLimit = 1
+            mergePlace = try? context.fetch(descriptor).first
+        } else {
+            mergePlace = nil
         }
         let safeTitle = mergePlace?.name ?? (trimmedTitle.isEmpty ? episode.title : trimmedTitle)
         let startChanged = startDate != episode.startDate
@@ -392,8 +401,28 @@ struct TimelineEditingService {
         } ?? false
 
         if startChanged || endChanged {
-            let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
-            let assertions = try context.fetch(FetchDescriptor<UserAssertion>())
+            let farFuture = Date.distantFuture
+            let proposedEnd = endDate ?? farFuture
+            let stayRaw = EpisodeKind.stay.rawValue
+            let episodeID = episode.id
+            let episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+                predicate: #Predicate<TimelineEpisode> { candidate in
+                    candidate.id != episodeID
+                        && candidate.kindRaw == stayRaw
+                        && candidate.startDate < proposedEnd
+                        && (candidate.endDate ?? farFuture) > startDate
+                },
+                sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+            )
+            let episodes = try context.fetch(episodeDescriptor)
+
+            let suppressRaw = UserAssertionType.suppress.rawValue
+            let assertionDescriptor = FetchDescriptor<UserAssertion>(
+                predicate: #Predicate<UserAssertion> { assertion in
+                    assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+                }
+            )
+            let assertions = try context.fetch(assertionDescriptor)
             let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
 
             if let validationError = StayIntervalValidator.validationError(
@@ -495,6 +524,83 @@ struct TimelineEditingService {
         return coordinate
     }
 
+    func reclassify(
+        _ episode: TimelineEpisode,
+        as kind: EpisodeKind,
+        in context: ModelContext
+    ) throws {
+        guard kind == .stay || kind == .move else { return }
+        guard episode.kind != kind else { return }
+
+        let originalStart = episode.startDate
+        let originalEnd = episode.endDate ?? episode.startDate.addingTimeInterval(1)
+
+        deactivateAssertions(for: episode.id, type: .reclassify, in: context)
+        context.insert(UserAssertion(
+            episodeID: episode.id,
+            type: .reclassify,
+            replacementTitle: kind.rawValue
+        ))
+
+        if kind == .move {
+            let stayRaw = EpisodeKind.stay.rawValue
+            let suppressRaw = UserAssertionType.suppress.rawValue
+            let episodeID = episode.id
+            let stayDescriptor = FetchDescriptor<TimelineEpisode>(
+                predicate: #Predicate<TimelineEpisode> { candidate in
+                    candidate.kindRaw == stayRaw && candidate.id != episodeID
+                },
+                sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+            )
+            let suppressDescriptor = FetchDescriptor<UserAssertion>(
+                predicate: #Predicate<UserAssertion> { assertion in
+                    assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+                }
+            )
+            let suppressedIDs = TimelineVisibility.suppressedEpisodeIDs(
+                from: (try? context.fetch(suppressDescriptor)) ?? []
+            )
+            let visibleStays = ((try? context.fetch(stayDescriptor)) ?? [])
+                .filter { !suppressedIDs.contains($0.id) }
+
+            if let previous = visibleStays
+                .filter({ ($0.endDate ?? $0.startDate) <= originalStart })
+                .max(by: { ($0.endDate ?? $0.startDate) < ($1.endDate ?? $1.startDate) }),
+               let previousEnd = previous.endDate {
+                episode.startDate = previousEnd
+            }
+            if let next = visibleStays
+                .filter({ $0.startDate >= originalEnd })
+                .min(by: { $0.startDate < $1.startDate }) {
+                episode.endDate = next.startDate
+            } else if episode.endDate == nil {
+                episode.endDate = originalEnd
+            }
+
+            episode.kind = .move
+            episode.title = "移動"
+            episode.subtitle = "手動で修正"
+            episode.placeID = nil
+            episode.confidence = .high
+        } else {
+            episode.kind = .stay
+            if episode.title == "移動" || episode.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                episode.title = "未設定の場所"
+            }
+            episode.subtitle = "移動から滞在に修正"
+            episode.confidence = .medium
+        }
+
+        try context.save()
+        try TimelineEngine().rebuildTransitions(
+            covering: DateInterval(
+                start: min(originalStart, episode.startDate).addingTimeInterval(-1),
+                end: max(originalEnd, episode.endDate ?? originalEnd).addingTimeInterval(1)
+            ),
+            in: context
+        )
+    }
+
     func setSuppressed(
         episodeID: UUID,
         suppressed: Bool,
@@ -509,19 +615,48 @@ struct TimelineEditingService {
         }
 
         try context.save()
+
+        var episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.id == episodeID
+            }
+        )
+        episodeDescriptor.fetchLimit = 1
+        if let episode = try? context.fetch(episodeDescriptor).first {
+            let effectiveEnd = max(
+                episode.endDate ?? episode.startDate.addingTimeInterval(1),
+                episode.startDate.addingTimeInterval(1)
+            )
+            try TimelineEngine().rebuildTransitions(
+                covering: DateInterval(
+                    start: episode.startDate.addingTimeInterval(-1),
+                    end: effectiveEnd.addingTimeInterval(1)
+                ),
+                in: context
+            )
+        }
     }
 
     func restoreAllSuppressed(in context: ModelContext) throws {
-        guard let assertions = try? context.fetch(FetchDescriptor<UserAssertion>()) else { return }
-        let suppressedIDs = Set(assertions.compactMap { assertion -> UUID? in
-            guard assertion.isActive, assertion.type == .suppress else { return nil }
-            assertion.isActive = false
-            return assertion.episodeID
-        })
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        let assertionDescriptor = FetchDescriptor<UserAssertion>(
+            predicate: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            }
+        )
+        guard let assertions = try? context.fetch(assertionDescriptor) else { return }
+        let suppressedIDs = Set(assertions.compactMap(\.episodeID))
 
         guard !suppressedIDs.isEmpty else { return }
-        let episodes = (try? context.fetch(FetchDescriptor<TimelineEpisode>())) ?? []
-        for episode in episodes where suppressedIDs.contains(episode.id) && episode.subtitle == "非表示" {
+        assertions.forEach { $0.isActive = false }
+
+        let episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.subtitle == "非表示"
+            }
+        )
+        let legacyEpisodes = (try? context.fetch(episodeDescriptor)) ?? []
+        for episode in legacyEpisodes where suppressedIDs.contains(episode.id) {
             episode.subtitle = nil
         }
         try context.save()
@@ -533,8 +668,12 @@ struct TimelineEditingService {
         endChanged: Bool,
         in context: ModelContext
     ) {
-        guard let assertions = try? context.fetch(FetchDescriptor<UserAssertion>()) else { return }
-        let active = assertions.filter { $0.episodeID == episodeID && $0.isActive }
+        let descriptor = FetchDescriptor<UserAssertion>(
+            predicate: #Predicate<UserAssertion> { assertion in
+                assertion.episodeID == episodeID && assertion.isActive
+            }
+        )
+        guard let active = try? context.fetch(descriptor) else { return }
         guard let legacy = active
             .filter({ $0.type == .retime })
             .max(by: { $0.createdAt < $1.createdAt }) else {
@@ -570,17 +709,29 @@ struct TimelineEditingService {
         type: UserAssertionType,
         in context: ModelContext
     ) {
-        guard let assertions = try? context.fetch(FetchDescriptor<UserAssertion>()) else { return }
-        for assertion in assertions where assertion.episodeID == episodeID && assertion.type == type && assertion.isActive {
+        let descriptor = FetchDescriptor<UserAssertion>(
+            predicate: #Predicate<UserAssertion> { assertion in
+                assertion.episodeID == episodeID && assertion.isActive
+            }
+        )
+        guard let assertions = try? context.fetch(descriptor) else { return }
+        for assertion in assertions where assertion.type == type {
             assertion.isActive = false
         }
     }
 
     private func clearLegacySuppressedSubtitle(for episodeID: UUID, in context: ModelContext) {
-        guard let episodes = try? context.fetch(FetchDescriptor<TimelineEpisode>()) else { return }
-        if let episode = episodes.first(where: { $0.id == episodeID && $0.subtitle == "非表示" }) {
-            episode.subtitle = nil
+        var descriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.id == episodeID
+            }
+        )
+        descriptor.fetchLimit = 1
+        guard let episode = try? context.fetch(descriptor).first,
+              episode.subtitle == "非表示" else {
+            return
         }
+        episode.subtitle = nil
     }
 
     private func detachMismatchedPlace(
@@ -589,8 +740,13 @@ struct TimelineEditingService {
         in context: ModelContext
     ) {
         guard let placeID = episode.placeID else { return }
-        let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
-        guard let place = places.first(where: { $0.id == placeID }), place.name != title else { return }
+        var descriptor = FetchDescriptor<PlaceRecord>(
+            predicate: #Predicate<PlaceRecord> { place in
+                place.id == placeID
+            }
+        )
+        descriptor.fetchLimit = 1
+        guard let place = try? context.fetch(descriptor).first, place.name != title else { return }
         episode.placeID = nil
         episode.confidence = .medium
         episode.subtitle = "場所を確認"
@@ -605,8 +761,13 @@ struct TimelineEditingService {
               let longitude = episode.longitude else {
             return
         }
-        let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
-        guard let place = places.first(where: { $0.id == placeID }) else { return }
+        var descriptor = FetchDescriptor<PlaceRecord>(
+            predicate: #Predicate<PlaceRecord> { place in
+                place.id == placeID
+            }
+        )
+        descriptor.fetchLimit = 1
+        guard let place = try? context.fetch(descriptor).first else { return }
 
         let distance = CLLocation(latitude: latitude, longitude: longitude).distance(
             from: CLLocation(latitude: place.latitude, longitude: place.longitude)
@@ -620,18 +781,21 @@ struct TimelineEditingService {
 
     private func learnConfirmedPlace(for episode: TimelineEpisode, name: String, in context: ModelContext) {
         guard let latitude = episode.latitude, let longitude = episode.longitude else { return }
-        let places = (try? context.fetch(FetchDescriptor<PlaceRecord>())) ?? []
+        let descriptor = FetchDescriptor<PlaceRecord>(
+            predicate: #Predicate<PlaceRecord> { place in
+                place.name == name
+            }
+        )
+        let sameNamePlaces = (try? context.fetch(descriptor)) ?? []
 
         if let placeID = episode.placeID,
-           let place = places.first(where: { $0.id == placeID }),
-           place.name == name {
+           let place = sameNamePlaces.first(where: { $0.id == placeID }) {
             place.source = .userConfirmed
             return
         }
 
         let episodeLocation = CLLocation(latitude: latitude, longitude: longitude)
-        let nearbySameNamePlace = places
-            .filter { $0.name == name }
+        let nearbySameNamePlace = sameNamePlaces
             .compactMap { place -> (PlaceRecord, CLLocationDistance)? in
                 let distance = episodeLocation.distance(
                     from: CLLocation(latitude: place.latitude, longitude: place.longitude)

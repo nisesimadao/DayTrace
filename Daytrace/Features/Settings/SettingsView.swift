@@ -9,13 +9,6 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(LocationRecorder.self) private var recorder
 
-    @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
-    @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
-    @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
-    @Query(sort: \PlaceRecord.name) private var places: [PlaceRecord]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
-    @Query(sort: \LocationEvidence.timestamp) private var locations: [LocationEvidence]
-
     @AppStorage("rawEvidenceRetentionDays") private var rawEvidenceRetentionDays = 90
     @AppStorage("appLockEnabled") private var appLockEnabled = false
 
@@ -29,20 +22,13 @@ struct SettingsView: View {
     @State private var isHistoryDeletionConfirmationPresented = false
     @State private var selectedRawEvidenceRetentionDays: Int
     @State private var pendingRawEvidenceRetentionDays: Int?
+    @State private var rawLocationCount = 0
+    @State private var suppressedCount = 0
 
     init() {
         _selectedRawEvidenceRetentionDays = State(
             initialValue: UserDefaults.standard.object(forKey: "rawEvidenceRetentionDays") as? Int ?? 90
         )
-    }
-
-    private var suppressedCount: Int {
-        TimelineVisibility.suppressedEpisodeIDs(from: assertions).count
-    }
-
-    private var visibleEpisodes: [TimelineEpisode] {
-        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
-        return episodes.filter { !suppressed.contains($0.id) }
     }
 
     private var appLockBinding: Binding<Bool> {
@@ -147,12 +133,12 @@ struct SettingsView: View {
                         } label: {
                             Label("GPX 生位置データ", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
                         }
-                        .disabled(locations.isEmpty)
+                        .disabled(rawLocationCount == 0)
                     } label: {
                         Label("書き出す", systemImage: "square.and.arrow.up")
                     }
 
-                    Text("JSONはTimeline・場所・日記・修正履歴を保存します。Markdownは読み返し用です。GPXには現在保持している生の位置データ（\(locations.count)点）が含まれます。")
+                    Text("JSONはTimeline・場所・日記・修正履歴を保存します。Markdownは読み返し用です。GPXには現在保持している生の位置データ（\(rawLocationCount)点）が含まれます。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -216,6 +202,10 @@ struct SettingsView: View {
             } message: {
                 Text(privacyActionErrorMessage ?? "")
             }
+            .task {
+                refreshRawLocationCount()
+                refreshSuppressedCount()
+            }
             .alert(
                 "古い生の位置データを削除しますか？",
                 isPresented: Binding(
@@ -240,6 +230,21 @@ struct SettingsView: View {
             let data: Data
             switch format {
             case .json:
+                let episodes = try modelContext.fetch(FetchDescriptor<TimelineEpisode>(
+                    sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+                ))
+                let journals = try modelContext.fetch(FetchDescriptor<JournalEntry>(
+                    sortBy: [SortDescriptor(\JournalEntry.dayAnchor)]
+                ))
+                let momentNotes = try modelContext.fetch(FetchDescriptor<MomentNote>(
+                    sortBy: [SortDescriptor(\MomentNote.timestamp)]
+                ))
+                let places = try modelContext.fetch(FetchDescriptor<PlaceRecord>(
+                    sortBy: [SortDescriptor(\PlaceRecord.name)]
+                ))
+                let assertions = try modelContext.fetch(FetchDescriptor<UserAssertion>(
+                    sortBy: [SortDescriptor(\UserAssertion.createdAt)]
+                ))
                 data = try DayTraceExportBuilder.json(
                     episodes: episodes,
                     journals: journals,
@@ -248,12 +253,33 @@ struct SettingsView: View {
                     assertions: assertions
                 )
             case .markdown:
+                let episodes = try modelContext.fetch(FetchDescriptor<TimelineEpisode>(
+                    sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+                ))
+                let journals = try modelContext.fetch(FetchDescriptor<JournalEntry>(
+                    sortBy: [SortDescriptor(\JournalEntry.dayAnchor)]
+                ))
+                let momentNotes = try modelContext.fetch(FetchDescriptor<MomentNote>(
+                    sortBy: [SortDescriptor(\MomentNote.timestamp)]
+                ))
+                let suppressRaw = UserAssertionType.suppress.rawValue
+                let assertionDescriptor = FetchDescriptor<UserAssertion>(
+                    predicate: #Predicate<UserAssertion> { assertion in
+                        assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+                    }
+                )
+                let suppressed = Set(try modelContext.fetch(assertionDescriptor).compactMap(\.episodeID))
+                let visibleEpisodes = episodes.filter { !suppressed.contains($0.id) }
                 data = Data(DayTraceExportBuilder.markdown(
                     episodes: visibleEpisodes,
                     journals: journals,
                     momentNotes: momentNotes
                 ).utf8)
             case .gpx:
+                let descriptor = FetchDescriptor<LocationEvidence>(
+                    sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
+                )
+                let locations = try modelContext.fetch(descriptor)
                 data = Data(DayTraceExportBuilder.gpx(locations: locations).utf8)
             }
 
@@ -269,6 +295,7 @@ struct SettingsView: View {
     private func deleteLocationHistory() {
         do {
             try recorder.deleteLocationHistoryKeepingJournal()
+            refreshRawLocationCount()
         } catch {
             privacyActionErrorMessage = error.localizedDescription
         }
@@ -290,6 +317,7 @@ struct SettingsView: View {
             try recorder.applyRetentionPolicy(days: days)
             rawEvidenceRetentionDays = days
             selectedRawEvidenceRetentionDays = days
+            refreshRawLocationCount()
         } catch {
             selectedRawEvidenceRetentionDays = rawEvidenceRetentionDays
             privacyActionErrorMessage = error.localizedDescription
@@ -301,10 +329,25 @@ struct SettingsView: View {
         selectedRawEvidenceRetentionDays = rawEvidenceRetentionDays
     }
 
+    private func refreshRawLocationCount() {
+        rawLocationCount = (try? modelContext.fetchCount(FetchDescriptor<LocationEvidence>())) ?? 0
+    }
+
+    private func refreshSuppressedCount() {
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        let descriptor = FetchDescriptor<UserAssertion>(
+            predicate: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            }
+        )
+        let assertions = (try? modelContext.fetch(descriptor)) ?? []
+        suppressedCount = Set(assertions.compactMap(\.episodeID)).count
+    }
+
     private func restoreAllSuppressed() {
         do {
             try TimelineEditingService().restoreAllSuppressed(in: modelContext)
-            try TimelineEngine().rebuildRecentTimeline(in: modelContext)
+            refreshSuppressedCount()
         } catch {
             privacyActionErrorMessage = error.localizedDescription
         }

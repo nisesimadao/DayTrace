@@ -2,23 +2,123 @@ import Foundation
 import SwiftData
 import SwiftUI
 
+enum HistoryDayIndex {
+    static func episodeDays(
+        episodes: [TimelineEpisode],
+        among candidateDays: [CalendarDay],
+        openEndedAt referenceDate: Date = .now
+    ) -> Set<CalendarDay> {
+        let targets = Set(candidateDays)
+        guard let firstTarget = targets.min(), let lastTarget = targets.max() else { return [] }
+
+        var result = Set<CalendarDay>()
+        for episode in episodes {
+            guard let coveredRange = coveredDayRange(for: episode, openEndedAt: referenceDate),
+                  coveredRange.lowerBound <= lastTarget,
+                  coveredRange.upperBound >= firstTarget else {
+                continue
+            }
+
+            for day in targets where day >= coveredRange.lowerBound && day <= coveredRange.upperBound {
+                result.insert(day)
+            }
+        }
+        return result
+    }
+
+    static func journalDays(
+        journals: [JournalEntry],
+        among candidateDays: [CalendarDay]
+    ) -> Set<CalendarDay> {
+        let targets = Set(candidateDays)
+        return Set(journals.lazy.map { TimelineDayProjection.day(for: $0) }.filter(targets.contains))
+    }
+
+    static func staysByDay(
+        episodes: [TimelineEpisode],
+        days: [CalendarDay],
+        openEndedAt referenceDate: Date = .now
+    ) -> [CalendarDay: [TimelineEpisode]] {
+        let targets = Set(days)
+        guard let firstTarget = targets.min(), let lastTarget = targets.max() else { return [:] }
+
+        var result: [CalendarDay: [TimelineEpisode]] = [:]
+        for episode in episodes where episode.kind == .stay {
+            guard let coveredRange = coveredDayRange(for: episode, openEndedAt: referenceDate),
+                  coveredRange.lowerBound <= lastTarget,
+                  coveredRange.upperBound >= firstTarget else {
+                continue
+            }
+
+            for day in days where day >= coveredRange.lowerBound && day <= coveredRange.upperBound {
+                result[day, default: []].append(episode)
+            }
+        }
+
+        for day in Array(result.keys) {
+            result[day]?.sort { $0.startDate < $1.startDate }
+        }
+        return result
+    }
+
+    static func journalsByDay(
+        journals: [JournalEntry],
+        days: [CalendarDay]
+    ) -> [CalendarDay: JournalEntry] {
+        let targets = Set(days)
+        var result: [CalendarDay: JournalEntry] = [:]
+        for journal in journals {
+            let day = TimelineDayProjection.day(for: journal)
+            guard targets.contains(day), result[day] == nil else { continue }
+            result[day] = journal
+        }
+        return result
+    }
+
+    private static func coveredDayRange(
+        for episode: TimelineEpisode,
+        openEndedAt referenceDate: Date
+    ) -> ClosedRange<CalendarDay>? {
+        let effectiveEnd = episode.endDate ?? referenceDate
+        guard effectiveEnd > episode.startDate else { return nil }
+
+        let zone = TimelineDayProjection.timeZone(identifier: episode.timeZoneIdentifier)
+        let startDay = CalendarDay(containing: episode.startDate, timeZone: zone)
+        let lastInstant = effectiveEnd.addingTimeInterval(-0.001)
+        let endDay = CalendarDay(
+            containing: max(lastInstant, episode.startDate),
+            timeZone: zone
+        )
+        return startDay...endDay
+    }
+}
+
+enum HistoryOverviewQuery {
+    static func monthEnvelope(
+        for displayedMonth: Date,
+        timeZone: TimeZone = .current
+    ) -> DateInterval {
+        let monthDates = CalendarMonthGrid.days(for: displayedMonth, timeZone: timeZone).compactMap { $0 }
+        guard let firstDate = monthDates.first, let lastDate = monthDates.last else {
+            let fallback = CalendarDay(containing: displayedMonth, timeZone: timeZone)
+            return TimelineDayProjection.queryEnvelope(for: fallback)
+        }
+
+        let firstDay = CalendarDay(containing: firstDate, timeZone: timeZone)
+        let lastDay = CalendarDay(containing: lastDate, timeZone: timeZone)
+        let firstEnvelope = TimelineDayProjection.queryEnvelope(for: firstDay)
+        let lastEnvelope = TimelineDayProjection.queryEnvelope(for: lastDay)
+        return DateInterval(start: firstEnvelope.start, end: lastEnvelope.end)
+    }
+}
+
 struct HistoryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Query(sort: \TimelineEpisode.startDate, order: .reverse) private var episodes: [TimelineEpisode]
-    @Query(sort: \JournalEntry.dayAnchor, order: .reverse) private var journals: [JournalEntry]
-    @Query(sort: \MomentNote.timestamp, order: .reverse) private var momentNotes: [MomentNote]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
-
     @State private var displayedMonth = CalendarMonthGrid.monthAnchor(containing: .now, timeZone: .current)
     @State private var searchText = ""
 
     let openPlaces: () -> Void
     let openDay: (CalendarDay) -> Void
-
-    private var visibleEpisodes: [TimelineEpisode] {
-        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
-        return episodes.filter { !suppressed.contains($0.id) }
-    }
 
     private var trimmedSearchText: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -29,24 +129,19 @@ struct HistoryView: View {
             if trimmedSearchText.isEmpty {
                 VStack(alignment: .leading, spacing: DS.sectionSpacing) {
                     HistoryPlacesLink(openPlaces: openPlaces)
-                    HistoryCalendarCard(
+                    HistoryMonthQueryCard(
                         displayedMonth: displayedMonth,
                         setDisplayedMonth: { displayedMonth = $0 },
-                        episodes: visibleEpisodes,
-                        journals: journals,
                         openDay: openDay
                     )
-                    RecentDaysList(episodes: visibleEpisodes, journals: journals, openDay: openDay)
+                    RecentDaysQueryList(openDay: openDay)
                 }
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 40)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             } else {
-                HistorySearchResults(
+                HistorySearchQueryResults(
                     query: trimmedSearchText,
-                    episodes: visibleEpisodes,
-                    journals: journals,
-                    momentNotes: momentNotes,
                     openDay: openDay
                 )
                 .padding(.horizontal, DS.horizontalPadding)
@@ -54,6 +149,7 @@ struct HistoryView: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
+        .daytraceFloatingTabBarScrollClearance()
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .searchable(
             text: $searchText,
@@ -61,6 +157,151 @@ struct HistoryView: View {
             prompt: "場所・日記・メモを検索"
         )
         .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: trimmedSearchText.isEmpty)
+    }
+}
+
+private struct HistoryMonthQueryCard: View {
+    @Query private var episodes: [TimelineEpisode]
+    @Query private var journals: [JournalEntry]
+    @Query private var suppressions: [UserAssertion]
+
+    let displayedMonth: Date
+    let setDisplayedMonth: (Date) -> Void
+    let openDay: (CalendarDay) -> Void
+
+    init(
+        displayedMonth: Date,
+        setDisplayedMonth: @escaping (Date) -> Void,
+        openDay: @escaping (CalendarDay) -> Void
+    ) {
+        self.displayedMonth = displayedMonth
+        self.setDisplayedMonth = setDisplayedMonth
+        self.openDay = openDay
+
+        let envelope = HistoryOverviewQuery.monthEnvelope(for: displayedMonth)
+        let start = envelope.start
+        let end = envelope.end
+        let distantFuture = Date.distantFuture
+        let suppressRaw = UserAssertionType.suppress.rawValue
+
+        _episodes = Query(
+            filter: #Predicate<TimelineEpisode> { episode in
+                episode.startDate < end && (episode.endDate ?? distantFuture) > start
+            },
+            sort: \TimelineEpisode.startDate,
+            order: .reverse
+        )
+        _journals = Query(
+            filter: #Predicate<JournalEntry> { journal in
+                journal.dayAnchor >= start && journal.dayAnchor < end
+            },
+            sort: \JournalEntry.dayAnchor,
+            order: .reverse
+        )
+        _suppressions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+    }
+
+    private var visibleEpisodes: [TimelineEpisode] {
+        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: suppressions)
+        return episodes.filter { !suppressed.contains($0.id) }
+    }
+
+    var body: some View {
+        HistoryCalendarCard(
+            displayedMonth: displayedMonth,
+            setDisplayedMonth: setDisplayedMonth,
+            episodes: visibleEpisodes,
+            journals: journals,
+            openDay: openDay
+        )
+    }
+
+}
+
+private struct RecentDaysQueryList: View {
+    @Query private var episodes: [TimelineEpisode]
+    @Query private var journals: [JournalEntry]
+    @Query private var suppressions: [UserAssertion]
+
+    let openDay: (CalendarDay) -> Void
+
+    init(openDay: @escaping (CalendarDay) -> Void) {
+        self.openDay = openDay
+
+        var episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+            sortBy: [SortDescriptor(\TimelineEpisode.startDate, order: .reverse)]
+        )
+        episodeDescriptor.fetchLimit = 1_024
+        _episodes = Query(episodeDescriptor)
+
+        var journalDescriptor = FetchDescriptor<JournalEntry>(
+            sortBy: [SortDescriptor(\JournalEntry.dayAnchor, order: .reverse)]
+        )
+        journalDescriptor.fetchLimit = 512
+        _journals = Query(journalDescriptor)
+
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        _suppressions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+    }
+
+    private var visibleEpisodes: [TimelineEpisode] {
+        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: suppressions)
+        return episodes.filter { !suppressed.contains($0.id) }
+    }
+
+    var body: some View {
+        RecentDaysList(
+            episodes: visibleEpisodes,
+            journals: journals,
+            openDay: openDay
+        )
+    }
+}
+
+private struct HistorySearchQueryResults: View {
+    @Query(sort: \TimelineEpisode.startDate, order: .reverse) private var episodes: [TimelineEpisode]
+    @Query(sort: \JournalEntry.dayAnchor, order: .reverse) private var journals: [JournalEntry]
+    @Query(sort: \MomentNote.timestamp, order: .reverse) private var momentNotes: [MomentNote]
+    @Query private var suppressions: [UserAssertion]
+
+    let query: String
+    let openDay: (CalendarDay) -> Void
+
+    init(query: String, openDay: @escaping (CalendarDay) -> Void) {
+        self.query = query
+        self.openDay = openDay
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        _suppressions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+    }
+
+    private var visibleEpisodes: [TimelineEpisode] {
+        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: suppressions)
+        return episodes.filter { !suppressed.contains($0.id) }
+    }
+
+    var body: some View {
+        HistorySearchResults(
+            query: query,
+            episodes: visibleEpisodes,
+            journals: journals,
+            momentNotes: momentNotes,
+            openDay: openDay
+        )
     }
 }
 
@@ -219,36 +460,27 @@ private struct MonthHeader: View {
     }
 
     private var monthTitle: some View {
-        VStack(spacing: 1) {
-            Image(systemName: "chevron.up")
-                .font(.caption.bold())
-                .foregroundStyle(.tertiary)
-            Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
-                .font(.title2.bold())
-                .multilineTextAlignment(.center)
-                .contentTransition(.numericText())
-            Image(systemName: "chevron.down")
-                .font(.caption.bold())
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, minHeight: 44)
-        .contentShape(Rectangle())
-        .simultaneousGesture(monthSwipeGesture)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
-        .accessibilityHint("上下にスワイプして月を変更できます")
-        .accessibilityAdjustableAction { direction in
-            switch direction {
-            case .increment:
-                shiftMonth(1)
-            case .decrement:
-                shiftMonth(-1)
-            @unknown default:
-                break
+        Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
+            .font(.title2.bold())
+            .multilineTextAlignment(.center)
+            .contentTransition(.numericText())
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .contentShape(Rectangle())
+            .simultaneousGesture(monthSwipeGesture)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(displayedMonth.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))))
+            .accessibilityHint("左右にスワイプして月を変更できます")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment:
+                    shiftMonth(1)
+                case .decrement:
+                    shiftMonth(-1)
+                @unknown default:
+                    break
+                }
             }
-        }
     }
-
     private var previousMonthButton: some View {
         Button("前月", systemImage: "chevron.left") { shiftMonth(-1) }
             .font(.caption.weight(.semibold))
@@ -273,8 +505,8 @@ private struct MonthHeader: View {
             .onEnded { value in
                 let horizontalDistance = abs(value.translation.width)
                 let verticalDistance = abs(value.translation.height)
-                guard verticalDistance > horizontalDistance, verticalDistance >= 24 else { return }
-                shiftMonth(value.translation.height < 0 ? 1 : -1)
+                guard horizontalDistance > verticalDistance, horizontalDistance >= 24 else { return }
+                shiftMonth(value.translation.width < 0 ? 1 : -1)
             }
     }
 }
@@ -295,6 +527,18 @@ private struct MonthGrid: View {
     }
 
     var body: some View {
+        let calendarDays = days.compactMap { date in
+            date.map { CalendarDay(containing: $0, timeZone: .current) }
+        }
+        let memoryDays = HistoryDayIndex.episodeDays(
+            episodes: episodes,
+            among: calendarDays
+        )
+        let journalDays = HistoryDayIndex.journalDays(
+            journals: journals,
+            among: calendarDays
+        )
+
         VStack(spacing: 9) {
             HStack {
                 ForEach(CalendarMonthGrid.weekdayTitles, id: \.self) { title in
@@ -312,8 +556,8 @@ private struct MonthGrid: View {
                         let day = CalendarDay(containing: date, timeZone: .current)
                         let cell = DayCell(
                             date: date,
-                            hasMemory: hasMemory(on: day),
-                            hasJournal: hasJournal(on: day)
+                            hasMemory: memoryDays.contains(day),
+                            hasJournal: journalDays.contains(day)
                         )
 
                         if day <= today {
@@ -335,13 +579,6 @@ private struct MonthGrid: View {
         }
     }
 
-    private func hasMemory(on day: CalendarDay) -> Bool {
-        episodes.contains { TimelineDayProjection.episode($0, intersects: day) }
-    }
-
-    private func hasJournal(on day: CalendarDay) -> Bool {
-        journals.contains { TimelineDayProjection.journal($0, belongsTo: day) }
-    }
 }
 
 private struct DayCell: View {
@@ -404,17 +641,21 @@ private struct RecentDaysList: View {
     }
 
     var body: some View {
+        let days = recentDays
+        let staysByDay = HistoryDayIndex.staysByDay(episodes: episodes, days: days)
+        let journalsByDay = HistoryDayIndex.journalsByDay(journals: journals, days: days)
+
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("最近の記録")
                     .font(.title3.bold())
                 Spacer()
-                Text("\(recentDays.count)日")
+                Text("\(days.count)日")
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
-            if recentDays.isEmpty {
+            if days.isEmpty {
                 ContentUnavailableView {
                     Label("まだ記録がありません", systemImage: "book.closed")
                 } description: {
@@ -425,16 +666,20 @@ private struct RecentDaysList: View {
                 .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: DS.contentCornerRadius))
             } else {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(recentDays.enumerated()), id: \.element) { index, day in
+                    ForEach(Array(days.enumerated()), id: \.element) { index, day in
                         Button {
                             openDay(day)
                         } label: {
-                            RecentDayRow(day: day, episodes: episodes, journals: journals)
+                            RecentDayRow(
+                                day: day,
+                                stays: staysByDay[day] ?? [],
+                                journal: journalsByDay[day]
+                            )
                         }
                         .buttonStyle(.daytraceRowLink)
                         .hoverEffect(.highlight)
 
-                        if index < recentDays.count - 1 {
+                        if index < days.count - 1 {
                             Divider()
                                 .padding(.leading, 76)
                         }
@@ -448,21 +693,8 @@ private struct RecentDaysList: View {
 
 private struct RecentDayRow: View {
     let day: CalendarDay
-    let episodes: [TimelineEpisode]
-    let journals: [JournalEntry]
-
-    private var stays: [TimelineEpisode] {
-        episodes
-            .filter {
-                $0.kind == .stay
-                    && TimelineDayProjection.episode($0, intersects: day)
-            }
-            .sorted { $0.startDate < $1.startDate }
-    }
-
-    private var journal: JournalEntry? {
-        journals.first { TimelineDayProjection.journal($0, belongsTo: day) }
-    }
+    let stays: [TimelineEpisode]
+    let journal: JournalEntry?
 
     private var displayDate: Date? {
         day.date(in: .current)
@@ -574,8 +806,10 @@ private struct HistorySearchResults: View {
     }
 
     var body: some View {
+        let searchResults = results
+
         LazyVStack(alignment: .leading, spacing: 18) {
-            if results.isEmpty {
+            if searchResults.isEmpty {
                 ContentUnavailableView {
                     Label("見つかりませんでした", systemImage: "magnifyingglass")
                 } description: {
@@ -584,11 +818,11 @@ private struct HistorySearchResults: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 70)
             } else {
-                Text("\(results.count)日の記録")
+                Text("\(searchResults.count)日の記録")
                     .font(.headline)
                     .padding(.top, 12)
 
-                ForEach(results) { result in
+                ForEach(searchResults) { result in
                     Button {
                         openDay(result.day)
                     } label: {
@@ -666,21 +900,110 @@ private struct SearchDayRow: View {
     }
 }
 
+@MainActor
+enum HistoricalDayDataQuery {
+    static func locationEvidence(
+        in interval: DayInterval,
+        context: ModelContext
+    ) throws -> [LocationEvidence] {
+        let start = interval.start
+        let end = interval.end
+        let descriptor = FetchDescriptor<LocationEvidence>(
+            predicate: #Predicate<LocationEvidence> { evidence in
+                evidence.timestamp >= start && evidence.timestamp < end
+            },
+            sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
+        )
+        return try context.fetch(descriptor)
+    }
+
+    static func locationEvidence(
+        on day: CalendarDay,
+        context: ModelContext
+    ) throws -> [LocationEvidence] {
+        let envelope = TimelineDayProjection.queryEnvelope(for: day)
+        let start = envelope.start
+        let end = envelope.end
+        let descriptor = FetchDescriptor<LocationEvidence>(
+            predicate: #Predicate<LocationEvidence> { evidence in
+                evidence.timestamp >= start && evidence.timestamp < end
+            },
+            sortBy: [SortDescriptor(\LocationEvidence.timestamp)]
+        )
+
+        return try context.fetch(descriptor).filter { evidence in
+            let zone = TimelineDayProjection.timeZone(identifier: evidence.timeZoneIdentifier)
+            return CalendarDay(containing: evidence.timestamp, timeZone: zone) == day
+        }
+    }
+
+    static func suppressedEpisodeIDs(
+        among episodes: [TimelineEpisode],
+        context: ModelContext
+    ) -> Set<UUID> {
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        var suppressed: Set<UUID> = []
+        suppressed.reserveCapacity(episodes.count)
+
+        for episodeID in Set(episodes.map(\.id)) {
+            var descriptor = FetchDescriptor<UserAssertion>(
+                predicate: #Predicate<UserAssertion> { assertion in
+                    assertion.episodeID == episodeID
+                        && assertion.isActive
+                        && assertion.assertionTypeRaw == suppressRaw
+                }
+            )
+            descriptor.fetchLimit = 1
+            if (try? context.fetch(descriptor).isEmpty) == false {
+                suppressed.insert(episodeID)
+            }
+        }
+        return suppressed
+    }
+
+}
+
 struct HistoricalDayDetailView: View {
     let day: CalendarDay
 
-    @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
-    @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
-    @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
-    @Query(sort: \LocationEvidence.timestamp) private var locationEvidence: [LocationEvidence]
+    @Environment(\.modelContext) private var modelContext
+    @Query private var episodes: [TimelineEpisode]
+    @Query private var journals: [JournalEntry]
+    @Query private var momentNotes: [MomentNote]
 
     @State private var selectedEpisodeID: UUID?
+    @State private var dayRouteLocations: [LocationEvidence] = []
+    @State private var suppressedEpisodeIDs: Set<UUID> = []
     @State private var isMapExpanded = false
     @State private var stayEditSelection: HistoricalStayEditSelection?
 
-    private var suppressedEpisodeIDs: Set<UUID> {
-        TimelineVisibility.suppressedEpisodeIDs(from: assertions)
+    init(day: CalendarDay) {
+        self.day = day
+
+        let envelope = TimelineDayProjection.queryEnvelope(for: day)
+        let candidateStart = envelope.start
+        let candidateEnd = envelope.end
+        let farFuture = Date.distantFuture
+
+        _episodes = Query(
+            filter: #Predicate<TimelineEpisode> { episode in
+                episode.startDate < candidateEnd
+                    && (episode.endDate ?? farFuture) > candidateStart
+            },
+            sort: [SortDescriptor(\TimelineEpisode.startDate)]
+        )
+        _journals = Query(
+            filter: #Predicate<JournalEntry> { journal in
+                journal.dayAnchor >= candidateStart && journal.dayAnchor < candidateEnd
+            },
+            sort: [SortDescriptor(\JournalEntry.dayAnchor)]
+        )
+        _momentNotes = Query(
+            filter: #Predicate<MomentNote> { note in
+                note.timestamp >= candidateStart && note.timestamp < candidateEnd
+            },
+            sort: [SortDescriptor(\MomentNote.timestamp)]
+        )
     }
 
     private var dayEpisodes: [TimelineEpisode] {
@@ -764,6 +1087,7 @@ struct HistoricalDayDetailView: View {
                     DayTimeline(
                         episodes: dayEpisodes,
                         selectedEpisodeID: $selectedEpisodeID,
+                        displayDay: day,
                         lastEvidenceAt: nil,
                         allowsEditing: true,
                         allowsSuppression: false,
@@ -783,13 +1107,11 @@ struct HistoricalDayDetailView: View {
             .padding(.horizontal, DS.horizontalPadding)
             .padding(.bottom, 40)
         }
+        .daytraceFloatingTabBarScrollClearance()
         .navigationTitle("この日")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $stayEditSelection) { selection in
-            StayEditorSheet(
-                episode: selection.episode,
-                rebuildHistoricalTransitions: true
-            )
+            StayEditorSheet(episode: selection.episode)
         }
         .fullScreenCover(isPresented: $isMapExpanded) {
             ExpandedDayMapView(
@@ -800,15 +1122,26 @@ struct HistoricalDayDetailView: View {
                 selectedEpisodeID: $selectedEpisodeID
             )
         }
+        .task(id: day) {
+            do {
+                dayRouteLocations = try HistoricalDayDataQuery.locationEvidence(
+                    on: day,
+                    context: modelContext
+                )
+            } catch {
+                dayRouteLocations = []
+            }
+            suppressedEpisodeIDs = HistoricalDayDataQuery.suppressedEpisodeIDs(
+                among: episodes,
+                context: modelContext
+            )
+        }
     }
 
     private func showExpandedMap() {
         isMapExpanded = true
     }
 
-    private var dayRouteLocations: [LocationEvidence] {
-        locationEvidence.filter { $0.timestamp >= interval.start && $0.timestamp < interval.end }
-    }
 }
 
 private struct HistoricalStayEditSelection: Identifiable {

@@ -10,7 +10,7 @@ struct JournalComposer: View {
     let existingJournal: JournalEntry?
 
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
+    @Query private var momentNotes: [MomentNote]
 
     @State private var bodyText = ""
     @State private var isSuggestionPickerPresented = false
@@ -20,6 +20,22 @@ struct JournalComposer: View {
     @State private var savedBodyText: String?
     @State private var notePendingDeletion: MomentNote?
     @FocusState private var isFocused: Bool
+
+    init(day: DayInterval, existingJournal: JournalEntry?) {
+        self.day = day
+        self.existingJournal = existingJournal
+
+        let targetDay = CalendarDay(containing: day.start, timeZone: day.timeZone)
+        let envelope = TimelineDayProjection.queryEnvelope(for: targetDay)
+        let start = envelope.start
+        let end = envelope.end
+        _momentNotes = Query(
+            filter: #Predicate<MomentNote> { note in
+                note.timestamp >= start && note.timestamp < end
+            },
+            sort: \MomentNote.timestamp
+        )
+    }
 
     private var targetDay: CalendarDay {
         CalendarDay(containing: day.start, timeZone: day.timeZone)
@@ -307,10 +323,33 @@ private struct OnThisDayMemory {
 }
 
 private struct OnThisDaySection: View {
-    @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
+    @Query private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
-    @Query(sort: \PlaceRecord.name) private var places: [PlaceRecord]
+    @Query private var assertions: [UserAssertion]
+    @Query private var places: [PlaceRecord]
+
+    init() {
+        let stayRaw = EpisodeKind.stay.rawValue
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        _episodes = Query(
+            filter: #Predicate<TimelineEpisode> { episode in
+                episode.kindRaw == stayRaw
+            },
+            sort: \TimelineEpisode.startDate
+        )
+        _assertions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+        _places = Query(
+            filter: #Predicate<PlaceRecord> { place in
+                place.isPrivate
+            },
+            sort: \PlaceRecord.name
+        )
+    }
 
     private var today: CalendarDay {
         CalendarDay(containing: .now, timeZone: .current)
@@ -453,10 +492,17 @@ struct JournalEditingService {
     ) throws -> JournalEntry? {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         let targetDay = CalendarDay(containing: day.start, timeZone: day.timeZone)
-        let allJournals = try context.fetch(FetchDescriptor<JournalEntry>())
-        let matchingJournals = allJournals
+        let envelope = TimelineDayProjection.queryEnvelope(for: targetDay)
+        let candidateStart = envelope.start
+        let candidateEnd = envelope.end
+        let journalDescriptor = FetchDescriptor<JournalEntry>(
+            predicate: #Predicate<JournalEntry> { journal in
+                journal.dayAnchor >= candidateStart && journal.dayAnchor < candidateEnd
+            },
+            sortBy: [SortDescriptor(\JournalEntry.createdAt)]
+        )
+        let matchingJournals = try context.fetch(journalDescriptor)
             .filter { TimelineDayProjection.day(for: $0) == targetDay }
-            .sorted { $0.createdAt < $1.createdAt }
 
         let preferredJournal = existingJournal.flatMap { existing in
             matchingJournals.first { $0.id == existing.id }
@@ -511,9 +557,18 @@ struct JournalEditingService {
         fallback: DayInterval,
         in context: ModelContext
     ) throws -> DayInterval {
-        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>(
+        let envelope = TimelineDayProjection.queryEnvelope(for: day)
+        let candidateStart = envelope.start
+        let candidateEnd = envelope.end
+        let farFuture = Date.distantFuture
+        let episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.startDate < candidateEnd
+                    && (episode.endDate ?? farFuture) > candidateStart
+            },
             sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
-        ))
+        )
+        let episodes = try context.fetch(episodeDescriptor)
         if let episode = episodes.first(where: {
             TimelineDayProjection.episode($0, intersects: day)
         }) {
@@ -524,9 +579,13 @@ struct JournalEditingService {
             )
         }
 
-        let notes = try context.fetch(FetchDescriptor<MomentNote>(
+        let noteDescriptor = FetchDescriptor<MomentNote>(
+            predicate: #Predicate<MomentNote> { note in
+                note.timestamp >= candidateStart && note.timestamp < candidateEnd
+            },
             sortBy: [SortDescriptor(\MomentNote.timestamp)]
-        ))
+        )
+        let notes = try context.fetch(noteDescriptor)
         if let note = notes.first(where: {
             let zone = TimelineDayProjection.timeZone(identifier: $0.timeZoneIdentifier)
             return CalendarDay(containing: $0.timestamp, timeZone: zone) == day

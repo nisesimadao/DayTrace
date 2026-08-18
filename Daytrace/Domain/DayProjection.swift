@@ -125,6 +125,20 @@ enum TimelineDayProjection {
         TimeZone(identifier: identifier) ?? .current
     }
 
+    /// A database-only candidate window for one civil day. Final membership must still
+    /// be checked using each record's stored timezone. The one-day margin on both sides
+    /// safely covers every timezone in Foundation's database without scanning years of data.
+    static func queryEnvelope(for day: CalendarDay) -> DateInterval {
+        let utc = TimeZone(secondsFromGMT: 0) ?? .current
+        let anchor = day.date(in: utc) ?? .now
+        let utcDay = DayInterval(containing: anchor, timeZone: utc)
+        let margin: TimeInterval = 24 * 60 * 60
+        return DateInterval(
+            start: utcDay.start.addingTimeInterval(-margin),
+            end: utcDay.end.addingTimeInterval(margin)
+        )
+    }
+
     static func day(for episode: TimelineEpisode) -> CalendarDay {
         CalendarDay(
             containing: episode.startDate,
@@ -156,6 +170,21 @@ enum TimelineDayProjection {
 
     static func journal(_ journal: JournalEntry, belongsTo day: CalendarDay) -> Bool {
         self.day(for: journal) == day
+    }
+
+    static func displayInterval(
+        for episode: TimelineEpisode,
+        on day: CalendarDay,
+        openEndedAt referenceDate: Date = .now
+    ) -> DateInterval? {
+        let zone = timeZone(identifier: episode.timeZoneIdentifier)
+        guard let dayDate = day.date(in: zone) else { return nil }
+        let dayInterval = DayInterval(containing: dayDate, timeZone: zone)
+        let effectiveEnd = episode.endDate ?? referenceDate
+        let displayStart = max(episode.startDate, dayInterval.start)
+        let displayEnd = min(effectiveEnd, dayInterval.end)
+        guard displayEnd > displayStart else { return nil }
+        return DateInterval(start: displayStart, end: displayEnd)
     }
 
     static func coveredDays(
