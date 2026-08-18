@@ -10,7 +10,7 @@ struct JournalComposer: View {
     let existingJournal: JournalEntry?
 
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \MomentNote.timestamp) private var momentNotes: [MomentNote]
+    @Query private var momentNotes: [MomentNote]
 
     @State private var bodyText = ""
     @State private var isSuggestionPickerPresented = false
@@ -20,6 +20,22 @@ struct JournalComposer: View {
     @State private var savedBodyText: String?
     @State private var notePendingDeletion: MomentNote?
     @FocusState private var isFocused: Bool
+
+    init(day: DayInterval, existingJournal: JournalEntry?) {
+        self.day = day
+        self.existingJournal = existingJournal
+
+        let targetDay = CalendarDay(containing: day.start, timeZone: day.timeZone)
+        let envelope = TimelineDayProjection.queryEnvelope(for: targetDay)
+        let start = envelope.start
+        let end = envelope.end
+        _momentNotes = Query(
+            filter: #Predicate<MomentNote> { note in
+                note.timestamp >= start && note.timestamp < end
+            },
+            sort: \MomentNote.timestamp
+        )
+    }
 
     private var targetDay: CalendarDay {
         CalendarDay(containing: day.start, timeZone: day.timeZone)
