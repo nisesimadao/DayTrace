@@ -323,10 +323,33 @@ private struct OnThisDayMemory {
 }
 
 private struct OnThisDaySection: View {
-    @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
+    @Query private var episodes: [TimelineEpisode]
     @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
-    @Query(sort: \PlaceRecord.name) private var places: [PlaceRecord]
+    @Query private var assertions: [UserAssertion]
+    @Query private var places: [PlaceRecord]
+
+    init() {
+        let stayRaw = EpisodeKind.stay.rawValue
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        _episodes = Query(
+            filter: #Predicate<TimelineEpisode> { episode in
+                episode.kindRaw == stayRaw
+            },
+            sort: \TimelineEpisode.startDate
+        )
+        _assertions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+        _places = Query(
+            filter: #Predicate<PlaceRecord> { place in
+                place.isPrivate
+            },
+            sort: \PlaceRecord.name
+        )
+    }
 
     private var today: CalendarDay {
         CalendarDay(containing: .now, timeZone: .current)
