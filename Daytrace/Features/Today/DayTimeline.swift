@@ -40,14 +40,14 @@ struct DayTimeline: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(episodes.enumerated()), id: \.element.id) { index, episode in
+            ForEach(Array(orderedEpisodes.enumerated()), id: \.element.id) { index, episode in
                 TimelineEpisodeRow(
                     episode: episode,
                     displayDay: displayDay,
                     mapSequenceNumber: mapSequenceNumbers[episode.id],
                     isSelected: selectedEpisodeID == episode.id,
                     drawsTopLine: index > 0,
-                    drawsBottomLine: index < episodes.count - 1 || connectsToCurrentLocation,
+                    drawsBottomLine: index < orderedEpisodes.count - 1 || connectsToCurrentLocation,
                     lastEvidenceAt: lastEvidenceAt,
                     currentLocation: currentLocation,
                     allowsEditing: allowsEditing,
@@ -58,7 +58,7 @@ struct DayTimeline: View {
                         }
                     },
                     onEdit: {
-                        guard allowsEditing, episode.kind == .stay else { return }
+                        guard allowsEditing, episode.kind == .stay || episode.kind == .move else { return }
                         onEdit(episode)
                     },
                     onSuppress: {
@@ -71,11 +71,21 @@ struct DayTimeline: View {
         .animation(reduceMotion ? nil : .snappy, value: selectedEpisodeID)
     }
 
+    private var orderedEpisodes: [TimelineEpisode] {
+        episodes.sorted { lhs, rhs in
+            if lhs.startDate != rhs.startDate { return lhs.startDate < rhs.startDate }
+            let lhsEnd = lhs.endDate ?? .distantFuture
+            let rhsEnd = rhs.endDate ?? .distantFuture
+            if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
     private var mapSequenceNumbers: [UUID: Int] {
         var nextNumber = 1
         var numbers: [UUID: Int] = [:]
 
-        for episode in episodes
+        for episode in orderedEpisodes
         where episode.kind == .stay && episode.latitude != nil && episode.longitude != nil {
             numbers[episode.id] = nextNumber
             nextNumber += 1
@@ -114,7 +124,7 @@ private struct TimelineEpisodeRow: View {
     }
 
     private var canEdit: Bool {
-        allowsEditing && episode.kind == .stay
+        allowsEditing && (episode.kind == .stay || episode.kind == .move)
     }
 
     private var canShowOnMap: Bool {
@@ -146,8 +156,8 @@ private struct TimelineEpisodeRow: View {
         }
         .contextMenu {
             if canEdit {
-                Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
-                if allowsSuppression {
+                Button("この区間を修正", systemImage: "slider.horizontal.3", action: onEdit)
+                if allowsSuppression && episode.kind == .stay {
                     Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
                 }
             }

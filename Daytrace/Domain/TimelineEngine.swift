@@ -78,6 +78,18 @@ struct TimelineEngine {
             }
         })
         let currentVisitIDs = Set(visits.map(\.id))
+        let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
+        let suppressedVisitIDs = Set(existingEpisodes.compactMap { episode -> UUID? in
+            guard suppressedEpisodeIDs.contains(episode.id) else { return nil }
+            return episode.sourceVisitID
+        })
+        let reclassifiedVisitIDs = Set(existingEpisodes.compactMap { episode -> UUID? in
+            guard let sourceVisitID = episode.sourceVisitID,
+                  reclassifiedKind(from: assertionsByEpisode[episode.id] ?? []) == .move else {
+                return nil
+            }
+            return sourceVisitID
+        })
 
         for episode in existingEpisodes where episode.startDate >= horizon && episode.kind != .stay {
             if !activeAssertionEpisodeIDs.contains(episode.id) {
@@ -97,13 +109,18 @@ struct TimelineEngine {
         }
 
         var stayByVisitID: [UUID: TimelineEpisode] = [:]
-        for episode in existingEpisodes where episode.kind == .stay && !episode.isDeleted {
+        for episode in existingEpisodes
+        where episode.kind == .stay
+            && !episode.isDeleted
+            && !suppressedEpisodeIDs.contains(episode.id) {
             if let sourceVisitID = episode.sourceVisitID {
                 stayByVisitID[sourceVisitID] = episode
             }
         }
 
         for visit in visits {
+            guard !suppressedVisitIDs.contains(visit.id) else { continue }
+            guard !reclassifiedVisitIDs.contains(visit.id) else { continue }
             guard let arrival = visit.arrivalDate ?? inferredArrivalsByVisitID[visit.id] else { continue }
 
             if let episode = stayByVisitID[visit.id] {
@@ -169,6 +186,7 @@ struct TimelineEngine {
         for episode in existingEpisodes
         where episode.kind == .stay
             && !episode.isDeleted
+            && !suppressedEpisodeIDs.contains(episode.id)
             && manualBoundaryEpisodeIDs.contains(episode.id) {
             canonicalStaysByID[episode.id] = episode
         }
@@ -188,10 +206,21 @@ struct TimelineEngine {
             }
         }
 
+        let protectedTransitions = existingEpisodes.filter { episode in
+            episode.kind != .stay
+                && !episode.isDeleted
+                && activeAssertionEpisodeIDs.contains(episode.id)
+        }
+
         for pair in zip(canonicalStays, canonicalStays.dropFirst()) {
             guard let departure = pair.0.endDate else { continue }
             let nextArrival = pair.1.startDate
             guard nextArrival.timeIntervalSince(departure) >= 60 else { continue }
+            let protectedTransitionExists = protectedTransitions.contains { transition in
+                let transitionEnd = transition.endDate ?? transition.startDate
+                return transition.startDate <= departure && transitionEnd >= nextArrival
+            }
+            guard !protectedTransitionExists else { continue }
             insertTransition(
                 departure: departure,
                 nextArrival: nextArrival,
@@ -212,8 +241,13 @@ struct TimelineEngine {
         )
         let assertions = try context.fetch(assertionDescriptor)
         let protectedEpisodeIDs = Set(assertions.compactMap(\.episodeID))
+        let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
 
-        let canonicalStays = try transitionBoundaryStays(covering: interval, in: context)
+        let canonicalStays = try transitionBoundaryStays(
+            covering: interval,
+            excluding: suppressedEpisodeIDs,
+            in: context
+        )
         let candidatePairs: [(TimelineEpisode, TimelineEpisode)] = zip(
             canonicalStays,
             canonicalStays.dropFirst()
@@ -279,19 +313,12 @@ struct TimelineEngine {
 
     private func transitionBoundaryStays(
         covering interval: DateInterval,
+        excluding suppressedEpisodeIDs: Set<UUID>,
         in context: ModelContext
     ) throws -> [TimelineEpisode] {
         let stayRaw = EpisodeKind.stay.rawValue
         let intervalStart = interval.start
         let intervalEnd = interval.end
-
-        var previousDescriptor = FetchDescriptor<TimelineEpisode>(
-            predicate: #Predicate<TimelineEpisode> { episode in
-                episode.kindRaw == stayRaw && episode.startDate < intervalStart
-            },
-            sortBy: [SortDescriptor(\TimelineEpisode.startDate, order: .reverse)]
-        )
-        previousDescriptor.fetchLimit = 1
 
         let intervalDescriptor = FetchDescriptor<TimelineEpisode>(
             predicate: #Predicate<TimelineEpisode> { episode in
@@ -302,25 +329,74 @@ struct TimelineEngine {
             sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
         )
 
-        var nextDescriptor = FetchDescriptor<TimelineEpisode>(
-            predicate: #Predicate<TimelineEpisode> { episode in
-                episode.kindRaw == stayRaw && episode.startDate > intervalEnd
-            },
-            sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
-        )
-        nextDescriptor.fetchLimit = 1
-
         var staysByID: [UUID: TimelineEpisode] = [:]
-        for episode in try context.fetch(previousDescriptor) {
+        if let previous = try nearestVisibleStay(
+            before: intervalStart,
+            excluding: suppressedEpisodeIDs,
+            in: context
+        ) {
+            staysByID[previous.id] = previous
+        }
+        for episode in try context.fetch(intervalDescriptor)
+        where !suppressedEpisodeIDs.contains(episode.id) {
             staysByID[episode.id] = episode
         }
-        for episode in try context.fetch(intervalDescriptor) {
-            staysByID[episode.id] = episode
-        }
-        for episode in try context.fetch(nextDescriptor) {
-            staysByID[episode.id] = episode
+        if let next = try nearestVisibleStay(
+            after: intervalEnd,
+            excluding: suppressedEpisodeIDs,
+            in: context
+        ) {
+            staysByID[next.id] = next
         }
         return staysByID.values.sorted { $0.startDate < $1.startDate }
+    }
+
+    private func nearestVisibleStay(
+        before date: Date,
+        excluding suppressedEpisodeIDs: Set<UUID>,
+        in context: ModelContext
+    ) throws -> TimelineEpisode? {
+        let stayRaw = EpisodeKind.stay.rawValue
+        var cursor = date
+        while true {
+            var descriptor = FetchDescriptor<TimelineEpisode>(
+                predicate: #Predicate<TimelineEpisode> { episode in
+                    episode.kindRaw == stayRaw && episode.startDate < cursor
+                },
+                sortBy: [SortDescriptor(\TimelineEpisode.startDate, order: .reverse)]
+            )
+            descriptor.fetchLimit = 32
+            let batch = try context.fetch(descriptor)
+            if let episode = batch.first(where: { !suppressedEpisodeIDs.contains($0.id) }) {
+                return episode
+            }
+            guard batch.count == 32, let last = batch.last else { return nil }
+            cursor = last.startDate
+        }
+    }
+
+    private func nearestVisibleStay(
+        after date: Date,
+        excluding suppressedEpisodeIDs: Set<UUID>,
+        in context: ModelContext
+    ) throws -> TimelineEpisode? {
+        let stayRaw = EpisodeKind.stay.rawValue
+        var cursor = date
+        while true {
+            var descriptor = FetchDescriptor<TimelineEpisode>(
+                predicate: #Predicate<TimelineEpisode> { episode in
+                    episode.kindRaw == stayRaw && episode.startDate > cursor
+                },
+                sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+            )
+            descriptor.fetchLimit = 32
+            let batch = try context.fetch(descriptor)
+            if let episode = batch.first(where: { !suppressedEpisodeIDs.contains($0.id) }) {
+                return episode
+            }
+            guard batch.count == 32, let last = batch.last else { return nil }
+            cursor = last.startDate
+        }
     }
 
     private func transitionEpisodes(
@@ -369,6 +445,15 @@ struct TimelineEngine {
         return try context.fetch(descriptor)
     }
 
+    private func reclassifiedKind(from assertions: [UserAssertion]) -> EpisodeKind? {
+        assertions
+            .filter { $0.isActive && $0.type == .reclassify }
+            .sorted { $0.createdAt < $1.createdAt }
+            .last
+            .flatMap(\.replacementTitle)
+            .flatMap(EpisodeKind.init(rawValue:))
+    }
+
     private func reconcile(
         _ episode: TimelineEpisode,
         with visit: VisitEvidence,
@@ -385,7 +470,7 @@ struct TimelineEngine {
         let overridesStart = hasLegacyRetime || assertionTypes.contains(.retimeStart)
         let overridesEnd = hasLegacyRetime || assertionTypes.contains(.retimeEnd)
 
-        episode.kind = .stay
+        episode.kind = reclassifiedKind(from: assertions) ?? .stay
         episode.sourceVisitID = visit.id
         episode.sourceVersion = Self.sourceVersion
         episode.timeZoneIdentifier = visit.timeZoneIdentifier
@@ -446,6 +531,11 @@ struct TimelineEngine {
             case .reposition:
                 if let latitude = assertion.replacementLatitude { episode.latitude = latitude }
                 if let longitude = assertion.replacementLongitude { episode.longitude = longitude }
+            case .reclassify:
+                if let rawKind = assertion.replacementTitle,
+                   let kind = EpisodeKind(rawValue: rawKind) {
+                    episode.kind = kind
+                }
             case .confirm:
                 episode.confidence = .high
             case .suppress, .mergeStay, .splitStay:

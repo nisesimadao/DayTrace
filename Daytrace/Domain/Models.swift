@@ -292,6 +292,7 @@ enum UserAssertionType: String, Codable, Hashable, Sendable {
     case retimeStart
     case retimeEnd
     case reposition
+    case reclassify
     case suppress
     case mergeStay
     case splitStay
@@ -523,6 +524,83 @@ struct TimelineEditingService {
         return coordinate
     }
 
+    func reclassify(
+        _ episode: TimelineEpisode,
+        as kind: EpisodeKind,
+        in context: ModelContext
+    ) throws {
+        guard kind == .stay || kind == .move else { return }
+        guard episode.kind != kind else { return }
+
+        let originalStart = episode.startDate
+        let originalEnd = episode.endDate ?? episode.startDate.addingTimeInterval(1)
+
+        deactivateAssertions(for: episode.id, type: .reclassify, in: context)
+        context.insert(UserAssertion(
+            episodeID: episode.id,
+            type: .reclassify,
+            replacementTitle: kind.rawValue
+        ))
+
+        if kind == .move {
+            let stayRaw = EpisodeKind.stay.rawValue
+            let suppressRaw = UserAssertionType.suppress.rawValue
+            let episodeID = episode.id
+            let stayDescriptor = FetchDescriptor<TimelineEpisode>(
+                predicate: #Predicate<TimelineEpisode> { candidate in
+                    candidate.kindRaw == stayRaw && candidate.id != episodeID
+                },
+                sortBy: [SortDescriptor(\TimelineEpisode.startDate)]
+            )
+            let suppressDescriptor = FetchDescriptor<UserAssertion>(
+                predicate: #Predicate<UserAssertion> { assertion in
+                    assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+                }
+            )
+            let suppressedIDs = TimelineVisibility.suppressedEpisodeIDs(
+                from: (try? context.fetch(suppressDescriptor)) ?? []
+            )
+            let visibleStays = ((try? context.fetch(stayDescriptor)) ?? [])
+                .filter { !suppressedIDs.contains($0.id) }
+
+            if let previous = visibleStays
+                .filter({ ($0.endDate ?? $0.startDate) <= originalStart })
+                .max(by: { ($0.endDate ?? $0.startDate) < ($1.endDate ?? $1.startDate) }),
+               let previousEnd = previous.endDate {
+                episode.startDate = previousEnd
+            }
+            if let next = visibleStays
+                .filter({ $0.startDate >= originalEnd })
+                .min(by: { $0.startDate < $1.startDate }) {
+                episode.endDate = next.startDate
+            } else if episode.endDate == nil {
+                episode.endDate = originalEnd
+            }
+
+            episode.kind = .move
+            episode.title = "移動"
+            episode.subtitle = "手動で修正"
+            episode.placeID = nil
+            episode.confidence = .high
+        } else {
+            episode.kind = .stay
+            if episode.title == "移動" || episode.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                episode.title = "未設定の場所"
+            }
+            episode.subtitle = "移動から滞在に修正"
+            episode.confidence = .medium
+        }
+
+        try context.save()
+        try TimelineEngine().rebuildTransitions(
+            covering: DateInterval(
+                start: min(originalStart, episode.startDate).addingTimeInterval(-1),
+                end: max(originalEnd, episode.endDate ?? originalEnd).addingTimeInterval(1)
+            ),
+            in: context
+        )
+    }
+
     func setSuppressed(
         episodeID: UUID,
         suppressed: Bool,
@@ -537,6 +615,26 @@ struct TimelineEditingService {
         }
 
         try context.save()
+
+        var episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+            predicate: #Predicate<TimelineEpisode> { episode in
+                episode.id == episodeID
+            }
+        )
+        episodeDescriptor.fetchLimit = 1
+        if let episode = try? context.fetch(episodeDescriptor).first {
+            let effectiveEnd = max(
+                episode.endDate ?? episode.startDate.addingTimeInterval(1),
+                episode.startDate.addingTimeInterval(1)
+            )
+            try TimelineEngine().rebuildTransitions(
+                covering: DateInterval(
+                    start: episode.startDate.addingTimeInterval(-1),
+                    end: effectiveEnd.addingTimeInterval(1)
+                ),
+                in: context
+            )
+        }
     }
 
     func restoreAllSuppressed(in context: ModelContext) throws {

@@ -700,6 +700,7 @@ struct StayEditorSheet: View {
     @Query private var allAssertions: [UserAssertion]
     @Query(sort: \PlaceRecord.name) private var allPlaces: [PlaceRecord]
 
+    @State private var kind: EpisodeKind
     @State private var title: String
     @State private var startDate: Date
     @State private var endDate: Date
@@ -729,7 +730,8 @@ struct StayEditorSheet: View {
             sort: \UserAssertion.createdAt
         )
 
-        _title = State(initialValue: episode.title == "未設定の場所" ? "" : episode.title)
+        _kind = State(initialValue: episode.kind)
+        _title = State(initialValue: episode.kind == .move || episode.title == "未設定の場所" ? "" : episode.title)
         _startDate = State(initialValue: episode.startDate)
         _endDate = State(initialValue: episode.endDate ?? .now)
         _isOngoing = State(initialValue: episode.endDate == nil)
@@ -738,7 +740,7 @@ struct StayEditorSheet: View {
     }
 
     private var originalDisplayTitle: String {
-        episode.title == "未設定の場所" ? "" : episode.title
+        episode.kind == .move || episode.title == "未設定の場所" ? "" : episode.title
     }
 
     private var trimmedTitle: String {
@@ -791,7 +793,7 @@ struct StayEditorSheet: View {
     }
 
     private var intervalValidationError: TimelineEditingError? {
-        guard hasEditedTime else { return nil }
+        guard kind == .stay, hasEditedTime || episode.kind != .stay else { return nil }
         return StayIntervalValidator.validationError(
             episodeID: episode.id,
             startDate: startDate,
@@ -804,7 +806,20 @@ struct StayEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("場所") {
+                Section {
+                    Picker("種類", selection: $kind) {
+                        Text("滞在").tag(EpisodeKind.stay)
+                        Text("移動").tag(EpisodeKind.move)
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("この区間は？")
+                } footer: {
+                    Text("誤判定を直すと、次回の位置情報の再解析後もこの修正を優先します。")
+                }
+
+                if kind == .stay {
+                    Section("場所") {
                     TextField("場所の名前", text: $title)
                         .textInputAutocapitalization(.never)
 
@@ -826,9 +841,10 @@ struct StayEditorSheet: View {
                         Toggle("この場所として覚える", isOn: $shouldConfirmLocation)
                             .disabled(trimmedTitle.isEmpty)
                     }
+                    }
                 }
 
-                if !mergeCandidates.isEmpty {
+                if kind == .stay && !mergeCandidates.isEmpty {
                     Section {
                         Picker("結合先", selection: $selectedMergePlaceID) {
                             Text("結合しない").tag(UUID?.none)
@@ -847,6 +863,7 @@ struct StayEditorSheet: View {
                     }
                 }
 
+                if kind == .stay {
                 Section {
                     DatePicker("到着", selection: $startDate)
                     Toggle("まだここにいる", isOn: $isOngoing)
@@ -864,6 +881,18 @@ struct StayEditorSheet: View {
                         Text("ここで直した内容は、位置情報を再解析しても優先して残します。")
                     }
                 }
+                } else {
+                    Section {
+                        LabeledContent("開始", value: TimelineFormatting.clock(episode.startDate, timeZoneIdentifier: episode.timeZoneIdentifier))
+                        if let endDate = episode.endDate {
+                            LabeledContent("終了", value: TimelineFormatting.clock(endDate, timeZoneIdentifier: episode.timeZoneIdentifier))
+                        }
+                    } header: {
+                        Text("移動")
+                    } footer: {
+                        Text("滞在から移動へ直すと、前後の移動区間もまとめて1本の移動として整理します。")
+                    }
+                }
             }
             .navigationDestination(isPresented: $isLocationEditorPresented) {
                 if let originalLatitude = episode.latitude,
@@ -877,7 +906,7 @@ struct StayEditorSheet: View {
                     )
                 }
             }
-            .navigationTitle("滞在を修正")
+            .navigationTitle(kind == .stay ? "滞在を修正" : "移動を修正")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -933,18 +962,26 @@ struct StayEditorSheet: View {
         let timeWasEdited = hasEditedTime
 
         do {
-            try TimelineEditingService().saveStay(
-                episode,
-                title: title,
-                startDate: startDate,
-                endDate: proposedEndDate,
-                latitude: hasEditableCoordinate ? selectedLatitude : nil,
-                longitude: hasEditableCoordinate ? selectedLongitude : nil,
-                confirmLocation: shouldApplyConfirmation,
-                mergePlaceID: selectedMergePlaceID,
-                in: modelContext
-            )
-            if timeWasEdited {
+            let editor = TimelineEditingService()
+            let kindWasEdited = kind != episode.kind
+            if kindWasEdited {
+                try editor.reclassify(episode, as: kind, in: modelContext)
+            }
+
+            if kind == .stay {
+                try editor.saveStay(
+                    episode,
+                    title: title,
+                    startDate: startDate,
+                    endDate: proposedEndDate,
+                    latitude: hasEditableCoordinate ? selectedLatitude : nil,
+                    longitude: hasEditableCoordinate ? selectedLongitude : nil,
+                    confirmLocation: shouldApplyConfirmation,
+                    mergePlaceID: selectedMergePlaceID,
+                    in: modelContext
+                )
+            }
+            if kind == .stay && (timeWasEdited || kindWasEdited) {
                 var boundaryDates = [originalStart, startDate]
                 if let originalEnd { boundaryDates.append(originalEnd) }
                 if let proposedEndDate { boundaryDates.append(proposedEndDate) }

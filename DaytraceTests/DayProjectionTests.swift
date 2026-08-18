@@ -1560,7 +1560,7 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
-    func testSuppressingMiddleStayKeepsTransitionsAndUndoRestoresVisibility() throws {
+    func testSuppressingMiddleStayMergesTransitionsAndUndoRestoresSplit() throws {
         let context = try makeContext()
         let firstDeparture = baseTime.addingTimeInterval(60 * 60)
         let middleArrival = baseTime.addingTimeInterval(2 * 60 * 60)
@@ -1626,7 +1626,6 @@ final class DayProjectionTests: XCTestCase {
         XCTAssertEqual(transitionsBeforeSuppress.map(\.kind), [.move, .move])
         XCTAssertEqual(transitionsBeforeSuppress.map(\.startDate), [firstDeparture, middleDeparture])
         XCTAssertEqual(transitionsBeforeSuppress.compactMap(\.endDate), [middleArrival, thirdArrival])
-        let transitionIDsBeforeSuppress = transitionsBeforeSuppress.map(\.id)
         let rawEvidenceIDsBeforeSuppress = Set(
             try context.fetch(FetchDescriptor<LocationEvidence>()).map(\.id)
         )
@@ -1650,16 +1649,16 @@ final class DayProjectionTests: XCTestCase {
         let transitionsImmediatelyAfterSuppress = episodesImmediatelyAfterSuppress
             .filter { $0.kind != .stay }
             .sorted { $0.startDate < $1.startDate }
-        XCTAssertEqual(transitionsImmediatelyAfterSuppress.map(\.id), transitionIDsBeforeSuppress)
-        XCTAssertEqual(transitionsImmediatelyAfterSuppress.map(\.startDate), [firstDeparture, middleDeparture])
-        XCTAssertEqual(transitionsImmediatelyAfterSuppress.compactMap(\.endDate), [middleArrival, thirdArrival])
+        XCTAssertEqual(transitionsImmediatelyAfterSuppress.map(\.kind), [.move])
+        XCTAssertEqual(transitionsImmediatelyAfterSuppress.map(\.startDate), [firstDeparture])
+        XCTAssertEqual(transitionsImmediatelyAfterSuppress.compactMap(\.endDate), [thirdArrival])
         XCTAssertEqual(
             Set(try context.fetch(FetchDescriptor<LocationEvidence>()).map(\.id)),
             rawEvidenceIDsBeforeSuppress
         )
 
-        // A later automatic rebuild may regenerate transition rows, but the
-        // hidden stay must continue to define both canonical boundaries.
+        // A later automatic rebuild must keep the hidden stay out of the
+        // visible boundary set, so the movement stays as one continuous row.
         try engine.rebuildRecentTimeline(
             in: context,
             now: thirdDeparture,
@@ -1668,9 +1667,9 @@ final class DayProjectionTests: XCTestCase {
         let transitionsAfterRebuild = try context.fetch(FetchDescriptor<TimelineEpisode>())
             .filter { $0.kind != .stay }
             .sorted { $0.startDate < $1.startDate }
-        XCTAssertEqual(transitionsAfterRebuild.map(\.kind), [.move, .move])
-        XCTAssertEqual(transitionsAfterRebuild.map(\.startDate), [firstDeparture, middleDeparture])
-        XCTAssertEqual(transitionsAfterRebuild.compactMap(\.endDate), [middleArrival, thirdArrival])
+        XCTAssertEqual(transitionsAfterRebuild.map(\.kind), [.move])
+        XCTAssertEqual(transitionsAfterRebuild.map(\.startDate), [firstDeparture])
+        XCTAssertEqual(transitionsAfterRebuild.compactMap(\.endDate), [thirdArrival])
 
         try editor.setSuppressed(episodeID: middleStay.id, suppressed: false, in: context)
         let assertionsAfterUndo = try context.fetch(FetchDescriptor<UserAssertion>())
@@ -1687,6 +1686,99 @@ final class DayProjectionTests: XCTestCase {
             Set(try context.fetch(FetchDescriptor<LocationEvidence>()).map(\.id)),
             rawEvidenceIDsBeforeSuppress
         )
+    }
+
+    @MainActor
+    func testReclassifyingVisitStayAsMovePersistsWithoutRegeneratedStay() throws {
+        let context = try makeContext()
+        let firstDeparture = baseTime.addingTimeInterval(60 * 60)
+        let secondArrival = baseTime.addingTimeInterval(3 * 60 * 60)
+        let secondDeparture = baseTime.addingTimeInterval(4 * 60 * 60)
+        let firstVisit = insertVisit(
+            arrival: baseTime,
+            departure: firstDeparture,
+            observedAt: firstDeparture,
+            in: context
+        )
+        _ = insertVisit(
+            arrival: secondArrival,
+            departure: secondDeparture,
+            observedAt: secondDeparture,
+            latitude: 34.68,
+            longitude: 133.94,
+            in: context
+        )
+        context.insert(locationEvidence(
+            at: firstDeparture.addingTimeInterval(30 * 60),
+            latitude: 34.67,
+            longitude: 133.93,
+            speed: 8,
+            course: 45,
+            source: .significantChange
+        ))
+        try context.save()
+
+        let engine = TimelineEngine()
+        try engine.rebuildRecentTimeline(in: context, now: secondDeparture, trackingSensitivity: .lowPower)
+        let firstStay = try stay(for: firstVisit.id, in: context)
+
+        try TimelineEditingService().reclassify(firstStay, as: .move, in: context)
+        XCTAssertEqual(firstStay.kind, .move)
+        XCTAssertEqual(firstStay.title, "移動")
+
+        try engine.rebuildRecentTimeline(in: context, now: secondDeparture, trackingSensitivity: .lowPower)
+        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        XCTAssertTrue(episodes.contains { $0.id == firstStay.id && $0.kind == .move })
+        XCTAssertFalse(episodes.contains { $0.sourceVisitID == firstVisit.id && $0.kind == .stay })
+        XCTAssertTrue(try context.fetch(FetchDescriptor<UserAssertion>()).contains {
+            $0.episodeID == firstStay.id
+                && $0.type == .reclassify
+                && $0.replacementTitle == EpisodeKind.move.rawValue
+                && $0.isActive
+        })
+    }
+
+    @MainActor
+    func testReclassifyingMoveAsStayPersistsAsManualBoundary() throws {
+        let context = try makeContext()
+        let firstDeparture = baseTime.addingTimeInterval(60 * 60)
+        let secondArrival = baseTime.addingTimeInterval(3 * 60 * 60)
+        let secondDeparture = baseTime.addingTimeInterval(4 * 60 * 60)
+        _ = insertVisit(arrival: baseTime, departure: firstDeparture, observedAt: firstDeparture, in: context)
+        _ = insertVisit(
+            arrival: secondArrival,
+            departure: secondDeparture,
+            observedAt: secondDeparture,
+            latitude: 34.68,
+            longitude: 133.94,
+            in: context
+        )
+        context.insert(locationEvidence(
+            at: firstDeparture.addingTimeInterval(30 * 60),
+            latitude: 34.67,
+            longitude: 133.93,
+            speed: 8,
+            course: 45,
+            source: .significantChange
+        ))
+        try context.save()
+
+        let engine = TimelineEngine()
+        try engine.rebuildRecentTimeline(in: context, now: secondDeparture, trackingSensitivity: .lowPower)
+        let move = try XCTUnwrap(try context.fetch(FetchDescriptor<TimelineEpisode>()).first { $0.kind == .move })
+
+        try TimelineEditingService().reclassify(move, as: .stay, in: context)
+        XCTAssertEqual(move.kind, .stay)
+
+        try engine.rebuildRecentTimeline(in: context, now: secondDeparture, trackingSensitivity: .lowPower)
+        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        XCTAssertTrue(episodes.contains { $0.id == move.id && $0.kind == .stay })
+        XCTAssertTrue(try context.fetch(FetchDescriptor<UserAssertion>()).contains {
+            $0.episodeID == move.id
+                && $0.type == .reclassify
+                && $0.replacementTitle == EpisodeKind.stay.rawValue
+                && $0.isActive
+        })
     }
 
     @MainActor
