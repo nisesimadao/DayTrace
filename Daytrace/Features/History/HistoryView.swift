@@ -93,23 +93,32 @@ enum HistoryDayIndex {
     }
 }
 
+enum HistoryOverviewQuery {
+    static func monthEnvelope(
+        for displayedMonth: Date,
+        timeZone: TimeZone = .current
+    ) -> DateInterval {
+        let monthDates = CalendarMonthGrid.days(for: displayedMonth, timeZone: timeZone).compactMap { $0 }
+        guard let firstDate = monthDates.first, let lastDate = monthDates.last else {
+            let fallback = CalendarDay(containing: displayedMonth, timeZone: timeZone)
+            return TimelineDayProjection.queryEnvelope(for: fallback)
+        }
+
+        let firstDay = CalendarDay(containing: firstDate, timeZone: timeZone)
+        let lastDay = CalendarDay(containing: lastDate, timeZone: timeZone)
+        let firstEnvelope = TimelineDayProjection.queryEnvelope(for: firstDay)
+        let lastEnvelope = TimelineDayProjection.queryEnvelope(for: lastDay)
+        return DateInterval(start: firstEnvelope.start, end: lastEnvelope.end)
+    }
+}
+
 struct HistoryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Query(sort: \TimelineEpisode.startDate, order: .reverse) private var episodes: [TimelineEpisode]
-    @Query(sort: \JournalEntry.dayAnchor, order: .reverse) private var journals: [JournalEntry]
-    @Query(sort: \MomentNote.timestamp, order: .reverse) private var momentNotes: [MomentNote]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
-
     @State private var displayedMonth = CalendarMonthGrid.monthAnchor(containing: .now, timeZone: .current)
     @State private var searchText = ""
 
     let openPlaces: () -> Void
     let openDay: (CalendarDay) -> Void
-
-    private var visibleEpisodes: [TimelineEpisode] {
-        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
-        return episodes.filter { !suppressed.contains($0.id) }
-    }
 
     private var trimmedSearchText: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -120,24 +129,19 @@ struct HistoryView: View {
             if trimmedSearchText.isEmpty {
                 VStack(alignment: .leading, spacing: DS.sectionSpacing) {
                     HistoryPlacesLink(openPlaces: openPlaces)
-                    HistoryCalendarCard(
+                    HistoryMonthQueryCard(
                         displayedMonth: displayedMonth,
                         setDisplayedMonth: { displayedMonth = $0 },
-                        episodes: visibleEpisodes,
-                        journals: journals,
                         openDay: openDay
                     )
-                    RecentDaysList(episodes: visibleEpisodes, journals: journals, openDay: openDay)
+                    RecentDaysQueryList(openDay: openDay)
                 }
                 .padding(.horizontal, DS.horizontalPadding)
                 .padding(.bottom, 40)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             } else {
-                HistorySearchResults(
+                HistorySearchQueryResults(
                     query: trimmedSearchText,
-                    episodes: visibleEpisodes,
-                    journals: journals,
-                    momentNotes: momentNotes,
                     openDay: openDay
                 )
                 .padding(.horizontal, DS.horizontalPadding)
@@ -153,6 +157,151 @@ struct HistoryView: View {
             prompt: "場所・日記・メモを検索"
         )
         .animation(reduceMotion ? nil : .smooth(duration: 0.24), value: trimmedSearchText.isEmpty)
+    }
+}
+
+private struct HistoryMonthQueryCard: View {
+    @Query private var episodes: [TimelineEpisode]
+    @Query private var journals: [JournalEntry]
+    @Query private var suppressions: [UserAssertion]
+
+    let displayedMonth: Date
+    let setDisplayedMonth: (Date) -> Void
+    let openDay: (CalendarDay) -> Void
+
+    init(
+        displayedMonth: Date,
+        setDisplayedMonth: @escaping (Date) -> Void,
+        openDay: @escaping (CalendarDay) -> Void
+    ) {
+        self.displayedMonth = displayedMonth
+        self.setDisplayedMonth = setDisplayedMonth
+        self.openDay = openDay
+
+        let envelope = HistoryOverviewQuery.monthEnvelope(for: displayedMonth)
+        let start = envelope.start
+        let end = envelope.end
+        let distantFuture = Date.distantFuture
+        let suppressRaw = UserAssertionType.suppress.rawValue
+
+        _episodes = Query(
+            filter: #Predicate<TimelineEpisode> { episode in
+                episode.startDate < end && (episode.endDate ?? distantFuture) > start
+            },
+            sort: \TimelineEpisode.startDate,
+            order: .reverse
+        )
+        _journals = Query(
+            filter: #Predicate<JournalEntry> { journal in
+                journal.dayAnchor >= start && journal.dayAnchor < end
+            },
+            sort: \JournalEntry.dayAnchor,
+            order: .reverse
+        )
+        _suppressions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+    }
+
+    private var visibleEpisodes: [TimelineEpisode] {
+        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: suppressions)
+        return episodes.filter { !suppressed.contains($0.id) }
+    }
+
+    var body: some View {
+        HistoryCalendarCard(
+            displayedMonth: displayedMonth,
+            setDisplayedMonth: setDisplayedMonth,
+            episodes: visibleEpisodes,
+            journals: journals,
+            openDay: openDay
+        )
+    }
+
+}
+
+private struct RecentDaysQueryList: View {
+    @Query private var episodes: [TimelineEpisode]
+    @Query private var journals: [JournalEntry]
+    @Query private var suppressions: [UserAssertion]
+
+    let openDay: (CalendarDay) -> Void
+
+    init(openDay: @escaping (CalendarDay) -> Void) {
+        self.openDay = openDay
+
+        var episodeDescriptor = FetchDescriptor<TimelineEpisode>(
+            sortBy: [SortDescriptor(\TimelineEpisode.startDate, order: .reverse)]
+        )
+        episodeDescriptor.fetchLimit = 1_024
+        _episodes = Query(episodeDescriptor)
+
+        var journalDescriptor = FetchDescriptor<JournalEntry>(
+            sortBy: [SortDescriptor(\JournalEntry.dayAnchor, order: .reverse)]
+        )
+        journalDescriptor.fetchLimit = 512
+        _journals = Query(journalDescriptor)
+
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        _suppressions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+    }
+
+    private var visibleEpisodes: [TimelineEpisode] {
+        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: suppressions)
+        return episodes.filter { !suppressed.contains($0.id) }
+    }
+
+    var body: some View {
+        RecentDaysList(
+            episodes: visibleEpisodes,
+            journals: journals,
+            openDay: openDay
+        )
+    }
+}
+
+private struct HistorySearchQueryResults: View {
+    @Query(sort: \TimelineEpisode.startDate, order: .reverse) private var episodes: [TimelineEpisode]
+    @Query(sort: \JournalEntry.dayAnchor, order: .reverse) private var journals: [JournalEntry]
+    @Query(sort: \MomentNote.timestamp, order: .reverse) private var momentNotes: [MomentNote]
+    @Query private var suppressions: [UserAssertion]
+
+    let query: String
+    let openDay: (CalendarDay) -> Void
+
+    init(query: String, openDay: @escaping (CalendarDay) -> Void) {
+        self.query = query
+        self.openDay = openDay
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        _suppressions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+    }
+
+    private var visibleEpisodes: [TimelineEpisode] {
+        let suppressed = TimelineVisibility.suppressedEpisodeIDs(from: suppressions)
+        return episodes.filter { !suppressed.contains($0.id) }
+    }
+
+    var body: some View {
+        HistorySearchResults(
+            query: query,
+            episodes: visibleEpisodes,
+            journals: journals,
+            momentNotes: momentNotes,
+            openDay: openDay
+        )
     }
 }
 

@@ -68,6 +68,43 @@ final class DayProjectionTests: XCTestCase {
         }
     }
 
+    func testHistoryMonthEnvelopeContainsRecordedTimezoneBoundaryDays() throws {
+        let tokyo = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = tokyo
+        let displayedMonth = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: tokyo,
+            year: 2026,
+            month: 8,
+            day: 1,
+            hour: 12
+        )))
+        let envelope = HistoryOverviewQuery.monthEnvelope(
+            for: displayedMonth,
+            timeZone: tokyo
+        )
+
+        for dayNumber in [1, 31] {
+            let targetDate = try XCTUnwrap(calendar.date(from: DateComponents(
+                timeZone: tokyo,
+                year: 2026,
+                month: 8,
+                day: dayNumber,
+                hour: 12
+            )))
+            let day = CalendarDay(containing: targetDate, timeZone: tokyo)
+            for identifier in TimeZone.knownTimeZoneIdentifiers {
+                guard let recordedZone = TimeZone(identifier: identifier),
+                      let recordedDate = day.date(in: recordedZone) else {
+                    continue
+                }
+                let dayInterval = DayInterval(containing: recordedDate, timeZone: recordedZone)
+                XCTAssertLessThanOrEqual(envelope.start, dayInterval.start)
+                XCTAssertGreaterThanOrEqual(envelope.end, dayInterval.end)
+            }
+        }
+    }
+
     func testHistoricalDisplayIntervalClipsMultiDayEpisodeToRecordedCivilDay() throws {
         let timeZone = try XCTUnwrap(TimeZone(identifier: zone))
         var calendar = Calendar(identifier: .gregorian)
