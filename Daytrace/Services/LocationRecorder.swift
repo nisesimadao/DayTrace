@@ -517,10 +517,16 @@ final class LocationRecorder: NSObject, @preconcurrency CLLocationManagerDelegat
 @MainActor
 struct RawEvidenceRetentionService {
     func backfillLegacyVisits(in context: ModelContext) throws {
-        let visits = try context.fetch(FetchDescriptor<VisitEvidence>())
+        let distantPast = Date.distantPast
+        let descriptor = FetchDescriptor<VisitEvidence>(
+            predicate: #Predicate<VisitEvidence> { visit in
+                visit.observedAt == distantPast
+            }
+        )
+        let visits = try context.fetch(descriptor)
         var changed = false
 
-        for visit in visits where visit.observedAt == .distantPast {
+        for visit in visits {
             guard let bestKnownDate = visit.departureDate ?? visit.arrivalDate else { continue }
             visit.observedAt = bestKnownDate
             changed = true
@@ -549,12 +555,13 @@ struct RawEvidenceRetentionService {
             where: #Predicate { $0.timestamp < cutoff }
         )
 
-        let visits = try context.fetch(FetchDescriptor<VisitEvidence>())
-        for visit in visits {
-            let evidenceDate = visit.departureDate ?? visit.arrivalDate ?? visit.observedAt
-            if evidenceDate < cutoff {
-                context.delete(visit)
+        let visitDescriptor = FetchDescriptor<VisitEvidence>(
+            predicate: #Predicate<VisitEvidence> { visit in
+                (visit.departureDate ?? visit.arrivalDate ?? visit.observedAt) < cutoff
             }
+        )
+        for visit in try context.fetch(visitDescriptor) {
+            context.delete(visit)
         }
 
         try context.save()
