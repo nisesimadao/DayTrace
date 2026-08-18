@@ -4,14 +4,27 @@ import SwiftUI
 import UIKit
 
 struct TodayView: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let day = DayInterval(containing: context.date, timeZone: .current)
+            let dayKey = CalendarDay(containing: context.date, timeZone: .current)
+            TodayDayView(day: day)
+                .id(dayKey)
+        }
+    }
+}
+
+private struct TodayDayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openURL) private var openURL
     @Environment(LocationRecorder.self) private var recorder
-    @Query(sort: \TimelineEpisode.startDate) private var episodes: [TimelineEpisode]
-    @Query(sort: \JournalEntry.dayAnchor) private var journals: [JournalEntry]
-    @Query(sort: \UserAssertion.createdAt) private var assertions: [UserAssertion]
+    @Query private var episodes: [TimelineEpisode]
+    @Query private var journals: [JournalEntry]
+    @Query private var assertions: [UserAssertion]
     @Query private var places: [PlaceRecord]
+
+    let day: DayInterval
 
     @State private var selectedEpisodeID: UUID?
     @State private var isSettingsPresented: Bool
@@ -23,7 +36,34 @@ struct TodayView: View {
     @State private var locationSnapshot = TodayLocationSnapshot.empty
     @State private var lastLocationSnapshotRefresh: Date?
 
-    init() {
+    init(day: DayInterval) {
+        self.day = day
+
+        let dayStart = day.start
+        let dayEnd = day.end
+        let distantFuture = Date.distantFuture
+        let suppressRaw = UserAssertionType.suppress.rawValue
+
+        _episodes = Query(
+            filter: #Predicate<TimelineEpisode> { episode in
+                episode.startDate < dayEnd
+                    && (episode.endDate ?? distantFuture) > dayStart
+            },
+            sort: \TimelineEpisode.startDate
+        )
+        _journals = Query(
+            filter: #Predicate<JournalEntry> { journal in
+                journal.dayAnchor >= dayStart && journal.dayAnchor < dayEnd
+            },
+            sort: \JournalEntry.dayAnchor
+        )
+        _assertions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+
 #if DEBUG
         _isSettingsPresented = State(
             initialValue: ProcessInfo.processInfo.environment["DAYTRACE_SHOW_SETTINGS"] == "1"
@@ -31,10 +71,6 @@ struct TodayView: View {
 #else
         _isSettingsPresented = State(initialValue: false)
 #endif
-    }
-
-    private var day: DayInterval {
-        DayInterval(containing: .now, timeZone: .current)
     }
 
     private var suppressedEpisodeIDs: Set<UUID> {
