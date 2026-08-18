@@ -696,8 +696,8 @@ struct StayEditorSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \TimelineEpisode.startDate) private var allEpisodes: [TimelineEpisode]
-    @Query(sort: \UserAssertion.createdAt) private var allAssertions: [UserAssertion]
+    @Query private var allEpisodes: [TimelineEpisode]
+    @Query private var allAssertions: [UserAssertion]
     @Query(sort: \PlaceRecord.name) private var allPlaces: [PlaceRecord]
 
     @State private var title: String
@@ -713,6 +713,22 @@ struct StayEditorSheet: View {
 
     init(episode: TimelineEpisode) {
         self.episode = episode
+
+        let stayRaw = EpisodeKind.stay.rawValue
+        let suppressRaw = UserAssertionType.suppress.rawValue
+        _allEpisodes = Query(
+            filter: #Predicate<TimelineEpisode> { candidate in
+                candidate.kindRaw == stayRaw
+            },
+            sort: \TimelineEpisode.startDate
+        )
+        _allAssertions = Query(
+            filter: #Predicate<UserAssertion> { assertion in
+                assertion.isActive && assertion.assertionTypeRaw == suppressRaw
+            },
+            sort: \UserAssertion.createdAt
+        )
+
         _title = State(initialValue: episode.title == "未設定の場所" ? "" : episode.title)
         _startDate = State(initialValue: episode.startDate)
         _endDate = State(initialValue: episode.endDate ?? .now)
