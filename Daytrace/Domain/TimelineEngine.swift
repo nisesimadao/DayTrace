@@ -59,10 +59,11 @@ struct TimelineEngine {
         }
 
         let activeAssertionEpisodeIDs = Set(assertionsByEpisode.keys)
+        let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
         let currentVisitIDs = Set(visits.map(\.id))
 
         for episode in existingEpisodes where episode.startDate >= horizon && episode.kind != .stay {
-            if !activeAssertionEpisodeIDs.contains(episode.id) {
+            if !suppressedEpisodeIDs.contains(episode.id) {
                 context.delete(episode)
             }
         }
@@ -173,10 +174,10 @@ struct TimelineEngine {
             }
         )
         let assertions = try context.fetch(assertionDescriptor)
-        let protectedEpisodeIDs = Set(assertions.compactMap(\.episodeID))
+        let suppressedEpisodeIDs = TimelineVisibility.suppressedEpisodeIDs(from: assertions)
 
         for episode in existingEpisodes where episode.kind != .stay {
-            guard !protectedEpisodeIDs.contains(episode.id) else { continue }
+            guard !suppressedEpisodeIDs.contains(episode.id) else { continue }
             let episodeEnd = episode.endDate ?? episode.startDate
             if episode.startDate <= interval.end && episodeEnd >= interval.start {
                 context.delete(episode)
@@ -197,7 +198,7 @@ struct TimelineEngine {
             guard departure <= interval.end && nextArrival >= interval.start else { continue }
 
             let protectedTransitionExists = existingEpisodes.contains { episode in
-                guard episode.kind != .stay, protectedEpisodeIDs.contains(episode.id) else { return false }
+                guard episode.kind != .stay, suppressedEpisodeIDs.contains(episode.id) else { return false }
                 let episodeEnd = episode.endDate ?? episode.startDate
                 return episode.startDate <= nextArrival && episodeEnd >= departure
             }

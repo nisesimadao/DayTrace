@@ -1328,6 +1328,57 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testTransitionWithNonSuppressionAssertionIsNotProtectedFromRebuild() throws {
+        let context = try makeContext()
+        let first = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.6600,
+            longitude: 133.9200
+        )
+        let transition = TimelineEpisode(
+            kind: .move,
+            startDate: baseTime.addingTimeInterval(60 * 60),
+            endDate: baseTime.addingTimeInterval(3 * 60 * 60),
+            title: "壊れた移動",
+            subtitle: "手動で修正",
+            latitude: 34.6700,
+            longitude: 133.9300,
+            confidence: .medium,
+            sourceVisitID: UUID(),
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        let second = timelineStay(
+            start: baseTime.addingTimeInterval(2 * 60 * 60),
+            end: baseTime.addingTimeInterval(3 * 60 * 60),
+            latitude: 34.6800,
+            longitude: 133.9400
+        )
+        context.insert(first)
+        context.insert(transition)
+        context.insert(second)
+        context.insert(UserAssertion(
+            episodeID: transition.id,
+            type: .automaticPlaceSuggestion,
+            replacementTitle: "誤った候補"
+        ))
+        try context.save()
+
+        try TimelineEngine().rebuildTransitions(
+            covering: DateInterval(
+                start: first.endDate!,
+                end: second.startDate
+            ),
+            in: context
+        )
+
+        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        XCTAssertFalse(episodes.contains { $0.id == transition.id })
+        XCTAssertEqual(episodes.filter { $0.kind != .stay }.count, 1)
+    }
+
+    @MainActor
     func testManualStayCanBeInsertedIntoTransitionWithoutReusingTransitionEpisode() throws {
         let context = try makeContext()
         let first = timelineStay(
