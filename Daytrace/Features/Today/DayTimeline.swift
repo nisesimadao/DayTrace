@@ -13,6 +13,7 @@ struct DayTimeline: View {
     let allowsSuppression: Bool
     let onEdit: (TimelineEpisode) -> Void
     let onSuppress: (TimelineEpisode) -> Void
+    let onInsertStay: (TimelineEpisode) -> Void
 
     init(
         episodes: [TimelineEpisode],
@@ -24,7 +25,8 @@ struct DayTimeline: View {
         allowsEditing: Bool = true,
         allowsSuppression: Bool = true,
         onEdit: @escaping (TimelineEpisode) -> Void,
-        onSuppress: @escaping (TimelineEpisode) -> Void
+        onSuppress: @escaping (TimelineEpisode) -> Void,
+        onInsertStay: @escaping (TimelineEpisode) -> Void = { _ in }
     ) {
         self.episodes = episodes
         _selectedEpisodeID = selectedEpisodeID
@@ -36,6 +38,7 @@ struct DayTimeline: View {
         self.allowsSuppression = allowsSuppression
         self.onEdit = onEdit
         self.onSuppress = onSuppress
+        self.onInsertStay = onInsertStay
     }
 
     var body: some View {
@@ -62,8 +65,12 @@ struct DayTimeline: View {
                         onEdit(episode)
                     },
                     onSuppress: {
-                        guard allowsEditing, allowsSuppression, episode.kind == .stay else { return }
+                        guard allowsEditing, allowsSuppression else { return }
                         onSuppress(episode)
+                    },
+                    onInsertStay: {
+                        guard allowsEditing, episode.kind != .stay else { return }
+                        onInsertStay(episode)
                     }
                 )
             }
@@ -98,6 +105,7 @@ private struct TimelineEpisodeRow: View {
     let onSelect: () -> Void
     let onEdit: () -> Void
     let onSuppress: () -> Void
+    let onInsertStay: () -> Void
 
     private var displayInterval: DateInterval? {
         guard let displayDay else { return nil }
@@ -115,6 +123,10 @@ private struct TimelineEpisodeRow: View {
 
     private var canEdit: Bool {
         allowsEditing && episode.kind == .stay
+    }
+
+    private var canInsertStay: Bool {
+        allowsEditing && episode.kind != .stay && episode.endDate != nil
     }
 
     private var canShowOnMap: Bool {
@@ -143,13 +155,26 @@ private struct TimelineEpisodeRow: View {
                     .background(Color.daytraceInk.opacity(0.1), in: .capsule)
                     .accessibilityHint("場所と時刻を修正します")
             }
+
+            if canInsertStay {
+                Button("追加", systemImage: "plus", action: onInsertStay)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.daytraceInk)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 10)
+                    .background(Color.daytraceInk.opacity(0.1), in: .capsule)
+                    .accessibilityHint("この区間に滞在を差し込みます")
+            }
         }
         .contextMenu {
             if canEdit {
                 Button("場所と時刻を修正", systemImage: "slider.horizontal.3", action: onEdit)
-                if allowsSuppression {
-                    Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
-                }
+            }
+            if canInsertStay {
+                Button("この区間に滞在を差し込む", systemImage: "plus", action: onInsertStay)
+            }
+            if allowsEditing, allowsSuppression {
+                Button("タイムラインから非表示", systemImage: "eye.slash", action: onSuppress)
             }
         }
     }

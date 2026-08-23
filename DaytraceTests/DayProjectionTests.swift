@@ -1272,6 +1272,122 @@ final class DayProjectionTests: XCTestCase {
     }
 
     @MainActor
+    func testTransitionCannotBeMutatedThroughStayEditor() throws {
+        let context = try makeContext()
+        let transition = TimelineEpisode(
+            kind: .move,
+            startDate: baseTime,
+            endDate: baseTime.addingTimeInterval(30 * 60),
+            title: "移動",
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(transition)
+        try context.save()
+
+        XCTAssertThrowsError(
+            try TimelineEditingService().saveStay(
+                transition,
+                title: "滞在に変える",
+                startDate: transition.startDate,
+                endDate: transition.endDate,
+                confirmLocation: false,
+                in: context
+            )
+        ) { error in
+            XCTAssertEqual(error as? TimelineEditingError, .cannotEditTransitionAsStay)
+        }
+        XCTAssertEqual(transition.kind, .move)
+    }
+
+    @MainActor
+    func testTransitionCanBeSuppressedDirectlyWithoutChangingKind() throws {
+        let context = try makeContext()
+        let transition = TimelineEpisode(
+            kind: .move,
+            startDate: baseTime,
+            endDate: baseTime.addingTimeInterval(30 * 60),
+            title: "移動",
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        context.insert(transition)
+        try context.save()
+
+        try TimelineEditingService().setSuppressed(
+            episodeID: transition.id,
+            suppressed: true,
+            in: context
+        )
+
+        let assertions = try context.fetch(FetchDescriptor<UserAssertion>())
+        XCTAssertTrue(TimelineVisibility.suppressedEpisodeIDs(from: assertions).contains(transition.id))
+        XCTAssertEqual(transition.kind, .move)
+    }
+
+    @MainActor
+    func testManualStayCanBeInsertedIntoTransitionWithoutReusingTransitionEpisode() throws {
+        let context = try makeContext()
+        let first = timelineStay(
+            start: baseTime,
+            end: baseTime.addingTimeInterval(60 * 60),
+            latitude: 34.6600,
+            longitude: 133.9200
+        )
+        let transition = TimelineEpisode(
+            kind: .move,
+            startDate: baseTime.addingTimeInterval(60 * 60),
+            endDate: baseTime.addingTimeInterval(2 * 60 * 60),
+            title: "移動",
+            confidence: .medium,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: zone
+        )
+        let second = timelineStay(
+            start: baseTime.addingTimeInterval(2 * 60 * 60),
+            end: baseTime.addingTimeInterval(3 * 60 * 60),
+            latitude: 34.6800,
+            longitude: 133.9400
+        )
+        context.insert(first)
+        context.insert(transition)
+        context.insert(second)
+        try context.save()
+
+        let inserted = try TimelineEditingService().insertManualStay(
+            in: transition,
+            routeLocations: [
+                locationEvidence(
+                    at: baseTime.addingTimeInterval(90 * 60),
+                    latitude: 34.6700,
+                    longitude: 133.9300
+                )
+            ],
+            context: context
+        )
+
+        XCTAssertNotEqual(inserted.id, transition.id)
+        XCTAssertEqual(inserted.kind, .stay)
+        XCTAssertEqual(inserted.title, "未設定の場所")
+        XCTAssertEqual(try XCTUnwrap(inserted.latitude), 34.6700, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(inserted.longitude), 133.9300, accuracy: 0.0001)
+
+        let episodes = try context.fetch(FetchDescriptor<TimelineEpisode>())
+        XCTAssertFalse(episodes.contains { $0.id == transition.id })
+        XCTAssertEqual(episodes.filter { $0.kind == .stay }.count, 3)
+        XCTAssertEqual(episodes.filter { $0.kind != .stay }.count, 2)
+
+        let assertionTypes = try context.fetch(FetchDescriptor<UserAssertion>())
+            .filter { $0.episodeID == inserted.id && $0.isActive }
+            .map(\.type)
+        XCTAssertTrue(assertionTypes.contains(.splitStay))
+        XCTAssertTrue(assertionTypes.contains(.retimeStart))
+        XCTAssertTrue(assertionTypes.contains(.retimeEnd))
+    }
+
+    @MainActor
     func testSuppressingMiddleStayKeepsTransitionsAndUndoRestoresVisibility() throws {
         let context = try makeContext()
         let firstDeparture = baseTime.addingTimeInterval(60 * 60)

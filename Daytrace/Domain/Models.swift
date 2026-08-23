@@ -314,6 +314,8 @@ enum TimelineVisibility {
 enum TimelineEditingError: LocalizedError, Equatable {
     case invalidStayRange
     case overlapsStay(String)
+    case cannotEditTransitionAsStay
+    case invalidInsertionRange
 
     var errorDescription: String? {
         switch self {
@@ -321,6 +323,10 @@ enum TimelineEditingError: LocalizedError, Equatable {
             "出発時刻は到着時刻より後にしてください。"
         case .overlapsStay(let title):
             "「\(title)」と時間が重なっています。"
+        case .cannotEditTransitionAsStay:
+            "移動や記録のない区間は直接滞在に変更できません。「滞在を差し込む」から新しい滞在として登録してください。"
+        case .invalidInsertionRange:
+            "滞在を差し込める時間がありません。"
         }
     }
 }
@@ -371,6 +377,10 @@ struct TimelineEditingService {
         mergePlaceID: UUID? = nil,
         in context: ModelContext
     ) throws {
+        guard episode.kind == .stay else {
+            throw TimelineEditingError.cannotEditTransitionAsStay
+        }
+
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let mergePlace: PlaceRecord?
         if let mergePlaceID {
@@ -516,11 +526,149 @@ struct TimelineEditingService {
         try context.save()
     }
 
+    func insertManualStay(
+        in transition: TimelineEpisode,
+        routeLocations: [LocationEvidence],
+        context: ModelContext
+    ) throws -> TimelineEpisode {
+        guard transition.kind != .stay, let transitionEnd = transition.endDate else {
+            throw TimelineEditingError.invalidInsertionRange
+        }
+
+        let defaultDuration = min(max(transitionEnd.timeIntervalSince(transition.startDate) / 3, 10 * 60), 30 * 60)
+        guard defaultDuration >= 60 else {
+            throw TimelineEditingError.invalidInsertionRange
+        }
+
+        let midpoint = transition.startDate.addingTimeInterval(transitionEnd.timeIntervalSince(transition.startDate) / 2)
+        let startDate = max(transition.startDate, midpoint.addingTimeInterval(-defaultDuration / 2))
+        let endDate = min(transitionEnd, startDate.addingTimeInterval(defaultDuration))
+        guard endDate.timeIntervalSince(startDate) >= 60 else {
+            throw TimelineEditingError.invalidInsertionRange
+        }
+
+        let coordinate = representativeCoordinate(
+            for: DateInterval(start: startDate, end: endDate),
+            midpoint: midpoint,
+            routeLocations: routeLocations,
+            context: context
+        )
+
+        let episode = TimelineEpisode(
+            kind: .stay,
+            startDate: startDate,
+            endDate: endDate,
+            title: "未設定の場所",
+            subtitle: "手動で差し込み",
+            latitude: coordinate?.latitude,
+            longitude: coordinate?.longitude,
+            confidence: .low,
+            sourceVersion: TimelineEngine.sourceVersion,
+            timeZoneIdentifier: transition.timeZoneIdentifier
+        )
+        context.insert(episode)
+        context.insert(UserAssertion(
+            episodeID: episode.id,
+            type: .retimeStart,
+            replacementStart: startDate
+        ))
+        context.insert(UserAssertion(
+            episodeID: episode.id,
+            type: .retimeEnd,
+            replacementEnd: endDate
+        ))
+        context.insert(UserAssertion(
+            episodeID: episode.id,
+            type: .splitStay
+        ))
+        if let coordinate {
+            context.insert(UserAssertion(
+                episodeID: episode.id,
+                type: .reposition,
+                replacementLatitude: coordinate.latitude,
+                replacementLongitude: coordinate.longitude
+            ))
+        }
+
+        try context.save()
+        try TimelineEngine().rebuildTransitions(
+            covering: DateInterval(
+                start: transition.startDate.addingTimeInterval(-1),
+                end: transitionEnd.addingTimeInterval(1)
+            ),
+            in: context
+        )
+        return episode
+    }
+
     private func coordinate(latitude: Double?, longitude: Double?) -> CLLocationCoordinate2D? {
         guard let latitude, let longitude else { return nil }
         let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
         return coordinate
+    }
+
+    private func representativeCoordinate(
+        for interval: DateInterval,
+        midpoint: Date,
+        routeLocations: [LocationEvidence],
+        context: ModelContext
+    ) -> CLLocationCoordinate2D? {
+        if let routeLocation = routeLocations
+            .filter({
+                $0.timestamp >= interval.start
+                    && $0.timestamp <= interval.end
+                    && $0.horizontalAccuracy >= 0
+                    && $0.horizontalAccuracy <= 1_000
+            })
+            .min(by: {
+                abs($0.timestamp.timeIntervalSince(midpoint)) < abs($1.timestamp.timeIntervalSince(midpoint))
+            }) {
+            return CLLocationCoordinate2D(latitude: routeLocation.latitude, longitude: routeLocation.longitude)
+        }
+
+        let episodes = (try? context.fetch(FetchDescriptor<TimelineEpisode>())) ?? []
+        let previousStay = episodes
+            .filter {
+                $0.kind == .stay
+                    && $0.startDate < interval.start
+                    && $0.latitude != nil
+                    && $0.longitude != nil
+            }
+            .max { $0.startDate < $1.startDate }
+        let nextStay = episodes
+            .filter {
+                $0.kind == .stay
+                    && $0.startDate > interval.end
+                    && $0.latitude != nil
+                    && $0.longitude != nil
+            }
+            .min { $0.startDate < $1.startDate }
+
+        if let previousStay, let nextStay,
+           let previousLatitude = previousStay.latitude,
+           let previousLongitude = previousStay.longitude,
+           let nextLatitude = nextStay.latitude,
+           let nextLongitude = nextStay.longitude {
+            return CLLocationCoordinate2D(
+                latitude: (previousLatitude + nextLatitude) / 2,
+                longitude: (previousLongitude + nextLongitude) / 2
+            )
+        }
+
+        if let previousStay,
+           let latitude = previousStay.latitude,
+           let longitude = previousStay.longitude {
+            return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        }
+
+        if let nextStay,
+           let latitude = nextStay.latitude,
+           let longitude = nextStay.longitude {
+            return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        }
+
+        return nil
     }
 
     func setSuppressed(

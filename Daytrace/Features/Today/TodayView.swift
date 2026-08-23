@@ -194,7 +194,8 @@ struct TodayView: View {
                                 onEdit: { episode in
                                     stayEditSelection = StayEditSelection(episode: episode)
                                 },
-                                onSuppress: suppress
+                                onSuppress: suppress,
+                                onInsertStay: insertStay
                             )
                         }
 
@@ -262,7 +263,7 @@ struct TodayView: View {
         .safeAreaInset(edge: .bottom) {
             if let episodeID = undoSuppressedEpisodeID {
                 HStack(spacing: 12) {
-                    Text("滞在を非表示にしました")
+                    Text("タイムライン項目を非表示にしました")
                         .font(.subheadline)
                     Spacer()
                     Button("元に戻す") {
@@ -282,7 +283,6 @@ struct TodayView: View {
     }
 
     private func suppress(_ episode: TimelineEpisode) {
-        guard episode.kind == .stay else { return }
         do {
             try TimelineEditingService().setSuppressed(
                 episodeID: episode.id,
@@ -293,6 +293,23 @@ struct TodayView: View {
                 selectedEpisodeID = nil
             }
             undoSuppressedEpisodeID = episode.id
+        } catch {
+            timelineErrorMessage = error.localizedDescription
+            isTimelineErrorPresented = true
+        }
+    }
+
+    private func insertStay(in transition: TimelineEpisode) {
+        do {
+            let episode = try TimelineEditingService().insertManualStay(
+                in: transition,
+                routeLocations: todayRouteLocations,
+                context: modelContext
+            )
+            selectedEpisodeID = episode.id
+            DispatchQueue.main.async {
+                stayEditSelection = StayEditSelection(episode: episode)
+            }
         } catch {
             timelineErrorMessage = error.localizedDescription
             isTimelineErrorPresented = true

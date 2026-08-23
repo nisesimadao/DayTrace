@@ -827,6 +827,7 @@ struct HistoricalDayDetailView: View {
     @State private var suppressedEpisodeIDs: Set<UUID> = []
     @State private var isMapExpanded = false
     @State private var stayEditSelection: HistoricalStayEditSelection?
+    @State private var timelineErrorMessage: String?
 
     init(day: CalendarDay) {
         self.day = day
@@ -941,11 +942,12 @@ struct HistoricalDayDetailView: View {
                         displayDay: day,
                         lastEvidenceAt: nil,
                         allowsEditing: true,
-                        allowsSuppression: false,
+                        allowsSuppression: true,
                         onEdit: { episode in
                             stayEditSelection = HistoricalStayEditSelection(episode: episode)
                         },
-                        onSuppress: { _ in }
+                        onSuppress: suppress,
+                        onInsertStay: insertStay
                     )
                 }
 
@@ -963,6 +965,17 @@ struct HistoricalDayDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $stayEditSelection) { selection in
             StayEditorSheet(episode: selection.episode)
+        }
+        .alert(
+            "タイムラインを更新できません",
+            isPresented: Binding(
+                get: { timelineErrorMessage != nil },
+                set: { if !$0 { timelineErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { timelineErrorMessage = nil }
+        } message: {
+            Text(timelineErrorMessage ?? "")
         }
         .fullScreenCover(isPresented: $isMapExpanded) {
             ExpandedDayMapView(
@@ -993,6 +1006,37 @@ struct HistoricalDayDetailView: View {
         isMapExpanded = true
     }
 
+    private func suppress(_ episode: TimelineEpisode) {
+        do {
+            try TimelineEditingService().setSuppressed(
+                episodeID: episode.id,
+                suppressed: true,
+                in: modelContext
+            )
+            suppressedEpisodeIDs.insert(episode.id)
+            if selectedEpisodeID == episode.id {
+                selectedEpisodeID = nil
+            }
+        } catch {
+            timelineErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func insertStay(in transition: TimelineEpisode) {
+        do {
+            let episode = try TimelineEditingService().insertManualStay(
+                in: transition,
+                routeLocations: dayRouteLocations,
+                context: modelContext
+            )
+            selectedEpisodeID = episode.id
+            DispatchQueue.main.async {
+                stayEditSelection = HistoricalStayEditSelection(episode: episode)
+            }
+        } catch {
+            timelineErrorMessage = error.localizedDescription
+        }
+    }
 }
 
 private struct HistoricalStayEditSelection: Identifiable {
